@@ -1,0 +1,59 @@
+# Tier 3 — high-level RL brain with curiosity, comfort, play, mood. Phase 5.
+
+env:
+  scene: assets/scenes/living_room.xml
+  episode_length_s: 120
+  decision_period_s: 2.0       # brain queried every 2 seconds of sim time
+  skills:                      # registry of mid-level skills available
+    - walk_to
+    - sit
+    - lie_down
+    - stretch
+    - groom
+    - swat
+    - jump_to
+    - crouch
+    - look_at
+
+mood:
+  dim: 6
+  decay_per_minute: 0.05       # OU pull toward zero
+  noise_sigma: 0.02
+  init_bias: [0.0, 0.0, 0.0, 0.1, 0.3, 0.2]  # mild positive curiosity/comfort prior
+
+rewards:
+  curiosity:
+    type: icm                  # Pathak et al. 2017
+    embed_dim: 64
+    forward_model_hidden: [256, 256]
+    novelty_decay: 0.995       # cap on infinite novelty rewards in fixed rooms
+  comfort:
+    elevated_weight: 0.4
+    soft_weight: 0.4
+    warm_weight: 0.2
+    low_accel_threshold_mps2: 0.5
+  play:
+    paw_range_m: 0.20
+    causal_credit_window_s: 0.4
+
+ppo:
+  total_timesteps: 20_000_000
+  learning_rate: 3.0e-4
+  entropy_cost: 1.0e-2
+  sampling_temperature: 0.8
+  skill_change_penalty: 0.02   # small cost for thrashing between skills
+
+network:
+  policy_hidden_layer_sizes: [256, 256]
+  value_hidden_layer_sizes:  [256, 256]
+  activation: silu
+
+logging:
+  wandb_project: robot-pet-cat
+  wandb_run_name: cat-brain-v1
+
+output:
+  hf_repo: ${HF_USERNAME}/go2-cat-brain
+  push_to_hub: true
+
+seed: 0

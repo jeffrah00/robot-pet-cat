@@ -2,9 +2,11 @@
 
 Usage:
     rpc sim --render
-    rpc train-locomotion --config configs/locomotion/unitree_go2_ppo.yaml
-    rpc collect-data --source pexels
-    rpc finetune-vla --config configs/vla/smolvla_cat.yaml
+    rpc train-motion --config configs/motion/cat_amp.yaml
+    rpc train-skill  --skill walk_to
+    rpc train-brain  --config configs/brain/cat_brain.yaml
+    rpc retarget     --clips data/motion_clips_raw
+    rpc demo
 """
 
 from __future__ import annotations
@@ -21,14 +23,29 @@ def main(argv: list[str] | None = None) -> int:
     sim.add_argument("--render", action="store_true", help="Open a viewer window.")
     sim.add_argument("--steps", type=int, default=1000)
 
-    train = sub.add_parser("train-locomotion", help="PPO training for low-level walking.")
-    train.add_argument("--config", required=True)
+    tmotion = sub.add_parser(
+        "train-motion", help="Tier 1: AMP-trained cat-style locomotion."
+    )
+    tmotion.add_argument("--config", required=True)
 
-    data = sub.add_parser("collect-data", help="Scrape and process cat videos.")
-    data.add_argument("--source", choices=["pexels", "youtube", "manifest"], required=True)
+    tskill = sub.add_parser(
+        "train-skill", help="Tier 2: a single skill (walk_to, sit, jump_to, swat, ...)."
+    )
+    tskill.add_argument("--skill", required=True)
+    tskill.add_argument("--config", default=None)
 
-    ft = sub.add_parser("finetune-vla", help="Fine-tune SmolVLA on cat behaviors.")
-    ft.add_argument("--config", required=True)
+    tbrain = sub.add_parser(
+        "train-brain",
+        help="Tier 3: high-level RL with curiosity + comfort + play + mood.",
+    )
+    tbrain.add_argument("--config", required=True)
+
+    retarget = sub.add_parser(
+        "retarget", help="Extract pose + retarget cat clips to Go2 reference trajectories."
+    )
+    retarget.add_argument("--clips", required=True, help="Directory of raw .mp4 clips.")
+
+    sub.add_parser("demo", help="Run the cat in the household scene for N seconds.")
 
     args = parser.parse_args(argv)
 
@@ -36,14 +53,20 @@ def main(argv: list[str] | None = None) -> int:
         from robot_pet_cat.sim.mujoco_env import smoke_test
 
         return smoke_test(render=args.render, steps=args.steps)
-    if args.cmd == "train-locomotion":
-        print(f"[stub] would train locomotion with {args.config}")
+    if args.cmd == "train-motion":
+        print(f"[stub] would AMP-train motion with {args.config}")
         return 0
-    if args.cmd == "collect-data":
-        print(f"[stub] would collect data from {args.source}")
+    if args.cmd == "train-skill":
+        print(f"[stub] would train skill {args.skill} (config={args.config})")
         return 0
-    if args.cmd == "finetune-vla":
-        print(f"[stub] would fine-tune VLA with {args.config}")
+    if args.cmd == "train-brain":
+        print(f"[stub] would train brain with {args.config}")
+        return 0
+    if args.cmd == "retarget":
+        print(f"[stub] would retarget clips in {args.clips}")
+        return 0
+    if args.cmd == "demo":
+        print("[stub] would spawn cat in living room and run for 60 seconds")
         return 0
     return 1
 

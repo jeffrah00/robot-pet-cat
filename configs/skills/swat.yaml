@@ -1,0 +1,32 @@
+# Tier 2 skill: swat(object_xyz). Approach + front-paw lift + nudge.
+
+skill:
+  name: swat
+  goal_space:
+    object_xyz: { range: [[-3.0, 3.0], [-3.0, 3.0], [0.0, 0.3]] }
+  termination:
+    object_velocity_threshold_mps: 0.3
+    timeout_s: 8
+
+reward:
+  approach_weight: 0.4
+  paw_proximity_weight: 0.4
+  post_contact_velocity_weight: 1.0
+  amp_style_weight: 2.0
+
+ppo:
+  total_timesteps: 10_000_000
+  learning_rate: 3.0e-4
+
+network:
+  policy_hidden_layer_sizes: [256, 256]
+  value_hidden_layer_sizes:  [256, 256]
+
+logging:
+  wandb_run_name: skill-swat-v1
+
+output:
+  hf_repo: ${HF_USERNAME}/go2-cat-skills
+  push_to_hub: true
+
+seed: 0

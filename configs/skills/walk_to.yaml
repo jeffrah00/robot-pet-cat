@@ -1,0 +1,33 @@
+# Tier 2 skill: walk_to(target_xy). Mostly a velocity-command wrapper over the
+# AMP-trained motion policy. Trains fast (~2 hours).
+
+skill:
+  name: walk_to
+  goal_space:
+    target_xy: { range: [[-5.0, 5.0], [-5.0, 5.0]] }
+  termination:
+    target_radius_m: 0.15
+    timeout_s: 15
+
+reward:
+  approach_weight: 1.0
+  facing_weight: 0.3
+  smoothness_weight: 0.1
+  amp_style_weight: 2.0       # inherits from motion/
+
+ppo:
+  total_timesteps: 5_000_000
+  learning_rate: 3.0e-4
+
+network:
+  policy_hidden_layer_sizes: [256, 256]
+  value_hidden_layer_sizes:  [256, 256]
+
+logging:
+  wandb_run_name: skill-walk_to-v1
+
+output:
+  hf_repo: ${HF_USERNAME}/go2-cat-skills
+  push_to_hub: true
+
+seed: 0

@@ -11,9 +11,10 @@
 
 [CmdletBinding()]
 param(
-    [string]$UserName  = "jeffrah00",
-    [string]$UserEmail = "jeffrah89@gmail.com",
-    [string]$RepoName  = "robot-pet-cat"
+    [string]$UserName    = "jeffrah00",
+    [string]$UserEmail   = "jeffrah89@gmail.com",
+    [string]$RepoName    = "robot-pet-cat",
+    [string]$GitHubUser  = "jeffrah00"
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,7 +30,7 @@ if (Test-Path ".\.git.broken") {
     Remove-Item -Recurse -Force ".\.git.broken"
 }
 if (Test-Path ".\.git") {
-    Write-Host ">>> .git already exists — skipping init"
+    Write-Host ">>> .git already exists -- skipping init"
 } else {
     Write-Host ">>> git init"
     git init -b main | Out-Null
@@ -54,15 +55,15 @@ Write-Host ""
 Write-Host "==================== Next steps ===================="
 Write-Host "1. Create an EMPTY repo on GitHub at:"
 Write-Host "     https://github.com/new"
-Write-Host "   Name it '$RepoName'. Don't add README/.gitignore/license — the scaffold has them."
+Write-Host "   Name it '$RepoName'. Don't add README/.gitignore/license -- the scaffold has them."
 Write-Host ""
-Write-Host "2. Add the remote and push. Replace <your-github-username>:"
+Write-Host "2. Add the remote and push:"
 Write-Host ""
 Write-Host "   # SSH (recommended if you have an SSH key set up):"
-Write-Host "   git remote add origin git@github.com:<your-github-username>/$RepoName.git"
+Write-Host "   git remote add origin git@github.com:$GitHubUser/$RepoName.git"
 Write-Host "   git push -u origin main"
 Write-Host ""
-Write-Host "   # …or HTTPS:"
-Write-Host "   git remote add origin https://github.com/<your-github-username>/$RepoName.git"
+Write-Host "   # ...or HTTPS:"
+Write-Host "   git remote add origin https://github.com/$GitHubUser/$RepoName.git"
 Write-Host "   git push -u origin main"
 Write-Host "===================================================="

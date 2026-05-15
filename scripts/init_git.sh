@@ -3,9 +3,10 @@
 #   bash scripts/init_git.sh
 set -euo pipefail
 
-USER_NAME="${USER_NAME:-Jeff}"
+USER_NAME="${USER_NAME:-jeffrah00}"
 USER_EMAIL="${USER_EMAIL:-jeffrah89@gmail.com}"
 REPO_NAME="${REPO_NAME:-robot-pet-cat}"
+GITHUB_USER="${GITHUB_USER:-jeffrah00}"
 
 if [[ ! -f pyproject.toml ]]; then
   echo "Run this from the project root (the folder containing pyproject.toml)."
@@ -33,14 +34,14 @@ cat <<EOF
 1. Create an EMPTY repo on GitHub at: https://github.com/new
    Name it '$REPO_NAME'. Don't add README/.gitignore/license.
 
-2. Add the remote and push (replace <your-github-username>):
+2. Add the remote and push:
 
    # SSH:
-   git remote add origin git@github.com:<your-github-username>/$REPO_NAME.git
+   git remote add origin git@github.com:$GITHUB_USER/$REPO_NAME.git
    git push -u origin main
 
    # …or HTTPS:
-   git remote add origin https://github.com/<your-github-username>/$REPO_NAME.git
+   git remote add origin https://github.com/$GITHUB_USER/$REPO_NAME.git
    git push -u origin main
 ====================================================
 EOF

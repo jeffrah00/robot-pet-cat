@@ -1,0 +1,36 @@
+# Tier 2 skill: jump_to(surface_xyz). Curriculum-learned per Atanassov 2024.
+
+skill:
+  name: jump_to
+  goal_space:
+    surface_xyz: { range: [[-2.0, 2.0], [-2.0, 2.0], [0.2, 0.5]] }
+  termination:
+    on_surface_radius_m: 0.20
+    timeout_s: 5
+
+curriculum:
+  height_schedule_m: [0.10, 0.20, 0.30, 0.40, 0.50]
+  promote_success_rate: 0.7    # bump curriculum stage when this is hit
+
+reward:
+  reach_weight: 1.0
+  landing_stability_weight: 0.5
+  pre_crouch_bonus: 0.2
+  amp_style_weight: 2.0
+
+ppo:
+  total_timesteps: 20_000_000
+  learning_rate: 3.0e-4
+
+network:
+  policy_hidden_layer_sizes: [256, 256]
+  value_hidden_layer_sizes:  [256, 256]
+
+logging:
+  wandb_run_name: skill-jump_to-v1
+
+output:
+  hf_repo: ${HF_USERNAME}/go2-cat-skills
+  push_to_hub: true
+
+seed: 0

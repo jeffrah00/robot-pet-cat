@@ -17,8 +17,8 @@ python3.10 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip wheel
 
-echo ">>> project (locomotion + dev extras)"
-pip install -e ".[locomotion,dev]"
+echo ">>> project (motion + brain + dev extras)"
+pip install -e ".[motion,brain,dev]"
 
 echo ">>> HF + W&B login (interactive)"
 if [[ -f .env ]]; then
@@ -27,7 +27,7 @@ if [[ -f .env ]]; then
   echo "${HF_TOKEN:-}" | huggingface-cli login --token "${HF_TOKEN:-}" --add-to-git-credential || true
   wandb login "${WANDB_API_KEY:-}" || true
 else
-  echo "No .env found — log in manually with huggingface-cli login && wandb login"
+  echo "No .env found - log in manually with huggingface-cli login && wandb login"
 fi
 
 echo ">>> mujoco_menagerie submodule"
@@ -37,4 +37,4 @@ git submodule update --init --recursive
 echo ">>> smoke test"
 python -m robot_pet_cat.cli sim --steps 100
 
-echo "Done. Next: bash scripts/train_locomotion.sh"
+echo "Done. Next: bash scripts/train_motion.sh"

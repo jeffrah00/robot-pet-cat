@@ -1,95 +1,121 @@
 # Stack rationale
 
 Quick justification for every piece we picked, and what we explicitly rejected.
+Updated for the three-tier (motion / skills / brain) architecture — see
+[`docs/architecture.md`](architecture.md) and [`docs/cat-behavior.md`](cat-behavior.md).
 
 ## Simulator: MuJoCo + MuJoCo Playground
 
 **Picked because:**
-- Free, open source, mature physics. Used by every serious quadruped lab.
-- MJX (MuJoCo on JAX) gives GPU-parallel rollouts — Isaac-Lab-level throughput
-  without the Isaac install pain.
-- MuJoCo Playground ships pre-built quadruped tasks (`Go1Joystick`, `Go2Joystick`)
-  with sane reward shaping and domain randomization. We don't reinvent it.
-- Runs on a single A100 spot instance for the budgets we have.
+- Free, open source, mature physics.
+- MJX (MuJoCo on JAX) gives GPU-parallel rollouts at Isaac-Lab-class throughput
+  without the install pain.
+- MuJoCo Playground ships pre-built quadruped tasks (`Go2Joystick`) that we
+  build the AMP env on top of.
+- Rendering quality is plain, but our brain reads scene state + (later)
+  privileged features, not photoreal pixels. No need for Isaac.
 
 **Rejected:**
-- **Isaac Sim / Lab.** Photoreal vision is great, but: heavy install, NVIDIA-only,
-  high VRAM floor, slower to iterate. We don't need photoreal pixels until the VLA
-  is doing pixel-level inference from sim images — and even then we can swap in.
-- **Genesis.** Promising but the ecosystem is thin. Few pretrained quadruped
-  assets, fewer worked examples. Revisit in 6 months.
-- **PyBullet.** Older, less accurate, smaller community now.
+- **Isaac Sim / Lab.** Heavier install, NVIDIA-only, higher VRAM floor, slower
+  iteration. Only worth it if/when we add a VLM-as-policy head that needs
+  photoreal pixels — Phase 7+ problem.
+- **Genesis.** Promising, ecosystem still thin.
+- **PyBullet.** Older, less accurate.
 
 ## Robot model: Unitree Go2
 
 **Picked because:**
-- Open MJCF lives in `mujoco_menagerie`, well-maintained by DeepMind.
-- Small (~15 kg) — closer to cat proportions than ANYmal or Spot.
+- Open MJCF in `mujoco_menagerie`, maintained by DeepMind.
+- ~15 kg, closer to cat proportions than ANYmal or Spot.
 - Largest body of community RL work to draw on.
 
 **Rejected:**
-- **Boston Dynamics Spot.** Closed sim assets, no official MuJoCo model.
-- **ANYmal.** Excellent model, but big (~30 kg, 0.7 m tall) and overpowered for a
-  cat — gait will feel wrong.
-- **MIT Mini Cheetah.** Cute, but the public MuJoCo model is community-maintained
-  and less reliable than Unitree's.
+- **Spot.** Closed sim assets.
+- **ANYmal.** Too big (~30 kg, 0.7 m tall) — gait won't read as catty.
+- **MIT Mini Cheetah.** Community models less reliable than Unitree's.
 
-## Low-level controller: PPO via Brax / MuJoCo Playground
+## Low-level controller: AMP-trained PPO
 
 **Picked because:**
-- Standard RL recipe for quadruped locomotion; lots of reference runs to compare to.
-- Brax is JAX-native, batches well on a single GPU, ~50M env steps in 4–6 hours.
+- AMP ([Peng et al. 2021](https://xbpeng.github.io/projects/AMP/)) is the
+  validated recipe for "make this policy move like the things in this clip
+  set." Quadruped-from-animal-mocap version was demonstrated in
+  [Peng et al. 2020](https://xbpeng.github.io/projects/Robotic_Imitation/index.html).
+- Style discriminator handles morphology mismatch gracefully — we're matching
+  distribution, not trajectory.
+- Cat-style motion at Tier 1 means every skill at Tier 2 inherits cat-feel
+  without us doing anything skill-specific.
 
 **Rejected:**
-- **Diffusion policy / world models** for low-level control. Cool, but overkill for
-  flat-ground locomotion. Save complexity for the high-level VLA.
+- **Vanilla PPO with hand-shaped reward.** Looks generic-quadruped.
+- **DeepMimic per-clip imitation.** Too brittle, requires high-quality clips
+  we don't have.
+- **Behavior cloning from cat video.** No action labels exist; the actions
+  would have to be retargeted joint positions anyway, which is the AMP recipe
+  in disguise but harder.
 
-## High-level policy: SmolVLA (LeRobot)
+## Mid-level skills: subgoal-conditioned RL
 
 **Picked because:**
-- ~450M params — fine-tunable on a single A100 in a few hours. Fits the budget.
-- Hugging Face LeRobot has a solid fine-tuning recipe, datasets format, and
-  community.
-- Vision + language + action is exactly the input/output shape we want.
+- Each skill is its own short PPO run on top of the AMP backbone — a few hours
+  on a single GPU. Cheap.
+- Skills compose well: `walk_to(target)` then `sit` then `swat(ball)` works
+  without explicit chaining logic.
+- The jump skill specifically benefits from the curriculum recipe in
+  [Atanassov et al. 2024](https://arxiv.org/abs/2401.16337) — well-known and
+  reproducible.
 
-**Rejected (for now, not forever):**
-- **NVIDIA GR00T N1.5.** Tightly coupled to humanoid pretraining and Isaac
-  workflows. Possible to adapt to quadruped but more friction than SmolVLA.
-- **π0 / OpenPi (Physical Intelligence).** Much larger and more capable, but
-  expensive to fine-tune. Plan to revisit in Phase 5 if SmolVLA's ceiling is hit.
-- **OpenVLA-7B.** Robot-arm-pretrained; less useful for legged motion. Big.
-- **End-to-end one-model VLA.** Cute in theory; in practice we get much more bang
-  for our buck by separating *how to move* (RL) from *what to do* (VLA).
+**Rejected:**
+- **One monolithic policy.** Harder to debug, longer to train, harder to
+  swap individual capabilities.
+- **Scripted skill primitives.** That's what makes Sony Aibo feel like a vending
+  machine. Skills are learned so they look fluid.
+
+## High-level brain: RL with intrinsic rewards + mood latent
+
+**Picked because:**
+- Curiosity + comfort + play are well-validated reward structures in their own
+  right; we're composing, not inventing.
+- The mood latent is a tiny addition (~50 lines) that buys huge perceived
+  variation in behavior.
+- Sampling temperature gives "coherent unpredictability" — cat-feel.
+
+**Rejected:**
+- **State machine / behavior tree.** Feels scripted because it is scripted.
+- **Pure imitation from cat behavior labels.** Would require huge labeled
+  dataset we don't have, and the result still wouldn't have mood drift.
+- **VLM-as-policy from day one.** Big, slow, hard to train, doesn't add
+  cat-feel — defer to Phase 7+.
 
 ## Cloud compute: RunPod (primary), Lambda Labs (backup)
 
 **Picked because:**
-- RunPod has the cheapest A100 spot rates as of mid-2026 (~$0.40–0.80/hr).
-- Per-minute billing, easy template UI, simple SSH.
-- Lambda Labs is more reliable for >12-hour runs — keep it as fallback when spot
-  preemption hurts.
+- RunPod has the cheapest A100 spot rates (~$0.40-0.80/hr).
+- Per-minute billing matches our bursty workload.
+- Lambda is more reliable for long runs — fallback when spot preemption
+  hurts.
 
 **Rejected:**
-- **AWS / GCP / Azure.** Higher prices, more setup overhead.
-- **Vast.ai.** Even cheaper, but variability in node quality is annoying.
-- **Colab Pro+.** Per-session timeouts kill long RL runs.
+- **AWS / GCP / Azure.** Pricier, more setup.
+- **Vast.ai.** Cheaper, but node quality varies.
+- **Colab.** Session timeouts kill RL.
 
-## Storage: Hugging Face Hub + Cloudflare R2
+## Storage: Hugging Face Hub only
 
 **Picked because:**
-- HF is the right home for the *processed* dataset and the trained models —
-  everyone in the community already pulls from there.
-- R2's **no-egress** pricing makes raw video (tens of GB) painless to move around.
+- Models (motion checkpoint, every skill, brain) go to HF.
+- Motion clips dataset is tiny (~100 MB even for 30 clips). HF handles it.
+- No raw video archive needed in this architecture — we don't ingest hours of
+  cat video, just curate ~30 clips.
 
 **Rejected:**
-- **S3.** Egress fees eat budget when we re-download raw clips.
-- **Google Drive / Dropbox.** Not API-friendly for ML pipelines.
-- **HF for raw video.** Bloats the dataset repo and the LFS quotas don't love it.
+- **Cloudflare R2 / Backblaze B2.** Was in the previous plan when we expected
+  tens of GB of raw video. Architecture pivot eliminated that need.
+- **S3, GDrive, Dropbox.** Same reasons as before.
 
 ## Experiment tracking: Weights & Biases
 
-**Picked because:** free personal tier is unlimited, has great video logging for
-RL rollouts, every ML person can read a W&B dashboard.
+**Picked because:** unlimited free personal tier, good RL rollout video logging,
+universal in the field.
 
-**Rejected:** MLflow (heavier self-host), TensorBoard (no remote logging), Neptune
-(comparable to W&B but smaller).
+**Rejected:** MLflow (heavier), TensorBoard (no remote), Neptune (smaller).

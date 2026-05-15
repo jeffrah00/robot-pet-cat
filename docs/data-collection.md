@@ -1,58 +1,59 @@
-# Cat-video data collection
+# Motion-clip collection
+
+The previous version of this doc described scraping tens of hours of cat
+video. After the AMP refactor that pipeline is gone — we now need ~10-30
+short clips total, for the AMP style discriminator. This is a one-day job.
+
+## What we need
+
+- **~10-30 clips, 3-10 seconds each.** Quality bar: visible cat, mostly side
+  view, single cat, modest camera motion. Pose-extraction quality matters more
+  than visual variety.
+- **Behavior mix:** walking, sitting down, stretching, crouching, leaping,
+  ambient idle motion. Aim for 2-4 clips per behavior.
+- **Total dataset size:** maybe 100-300 MB. Fits trivially on the HF Hub.
+
+We are training a style *discriminator*, not a classifier. The discriminator
+only sees pose transitions, so visual aesthetics don't matter — only that
+the underlying motion distribution is catty.
 
 ## Sources, in order of preference
 
-1. **Pexels** — free for commercial use, no auth required for browsing.
-   Search: https://www.pexels.com/search/videos/cat/
-   API: https://www.pexels.com/api/documentation/
-2. **Pixabay** — CC0. Search: https://pixabay.com/videos/search/cat/
-3. **Wikimedia Commons** — public domain or CC. Smaller pool but high quality.
-4. **Curated CC-BY YouTube channels** — *only* channels that explicitly mark
-   videos CC-BY. Use `yt-dlp --match-filter "license=Creative Commons Attribution"`.
+1. **Pexels** — free for commercial use.
+   https://www.pexels.com/search/videos/cat/
+2. **Pixabay** — CC0. https://pixabay.com/videos/search/cat/
+3. **Wikimedia Commons** — public-domain or CC.
+4. **Curated CC-BY YouTube channels** — `yt-dlp --match-filter
+   "license=Creative Commons Attribution"`.
 5. **Your own cat footage**, if applicable.
 
-**Do not** scrape arbitrary YouTube, Instagram, or TikTok. Standard ToS prohibit
-it and YouTube's "fair use for training" status is contested. Stick to licensed
-sources.
+Skip the rest. Standard YouTube/TikTok/Instagram ToS prohibit scraping;
+EgoPet-style scraping is for academic-publication contexts, not personal
+projects.
 
-## Filter pipeline
+## Pose extraction → retargeting → AMP clips
 
-Each clip needs to pass:
+The motion clip pipeline lives in `scripts/extract_clip_poses.py` (filled in
+during Phase 2). Steps:
 
-1. **Single cat** in frame for ≥80% of duration (run a YOLOv8 cat detector).
-2. **≥3 seconds, ≤30 seconds**. Longer clips get cut into 10-second chunks.
-3. **Bounding box ≥ 15% of frame area** — too-far cats yield bad pose.
-4. **Not heavily edited** — drop clips with hard cuts >1/sec (use scene-change
-   detection).
-5. **Reasonable lighting** — drop if mean luminance is too low or saturated.
+1. **3D pose** via [BARC](https://barc.is.tue.mpg.de/) (a SMAL variant tuned
+   for dogs/cats). Outputs per-frame body+limb joint angles in a parametric
+   skeleton.
+2. **Retarget to Go2** via IK using [Peng et al.'s motion_imitation
+   code](https://github.com/erwincoumans/motion_imitation) — adjust the
+   skeleton-mapping config for the cat skeleton vs the original dog skeleton.
+3. **Save as `.npz`** in `data/motion_clips/<clip_id>.npz` with shape
+   `(T, n_dof, 2)` — joint positions and velocities for the AMP
+   discriminator.
 
-## Pose extraction
-
-Use MMPose's `animalpose-hrnet-w48` (or DeepLabCut if MMPose is finicky).
-Outputs 20 keypoints per frame: head, ears, eyes, nose, neck, withers, hips,
-four paws (heel + toe), tail base, tail tip.
-
-Save per-clip as a `.npz` with shape `(T, 20, 3)` — last channel is confidence.
-
-## Behavior labels
-
-Two complementary approaches; do both, intersect for high confidence.
-
-**Heuristic (cheap):**
-- Stand vs. move: speed of withers keypoint < 0.05 m/s → standing.
-- Crouch: hips lower than withers by >20%.
-- Pounce: short burst of acceleration after a crouch.
-- Groom: face keypoints close to paws for >2 sec.
-- Sleep: minimal motion + body horizontal for >5 sec.
-
-**Cluster (richer):**
-- Embed each clip's pose sequence with a small temporal CNN.
-- HDBSCAN over the embeddings.
-- Manually label the resulting clusters.
+The retargeted clips will not look like the original cat motion played back
+perfectly — Go2 has fewer DOF. They'll look like a Go2 doing a rough
+approximation. That's fine; AMP wants distribution similarity, not
+photographic fidelity.
 
 ## Licensing & datasheet
 
-Every clip carries a sidecar JSON:
+Every clip gets a sidecar JSON:
 
 ```json
 {
@@ -61,31 +62,26 @@ Every clip carries a sidecar JSON:
   "url": "https://www.pexels.com/video/...",
   "license": "Pexels License",
   "attribution": "Video by Name",
-  "duration_s": 12.4,
-  "ingested_at": "2026-05-20T18:31:00Z"
+  "duration_s": 6.4
 }
 ```
 
-The dataset on HF Hub gets a datasheet (`datasheet.md`) covering source mix,
-license breakdown, biases (overrepresentation of indoor housecats vs. outdoor,
-breed skew, etc.), and known failure modes.
+The clip dataset on HF Hub (`jeffrah00/cat-motion-clips`) gets a short
+datasheet covering sources and licenses.
 
 ## Storage layout
 
 ```
 data/
-├── raw/
-│   ├── pexels/
-│   │   ├── 4827593.mp4
-│   │   └── 4827593.json
-│   └── pixabay/
-├── processed/
-│   ├── pose/
-│   │   └── 4827593.npz
-│   └── labels/
-│       └── 4827593.yaml
-└── manifests/
-    └── train.jsonl
+├── motion_clips/                  # ~30 retargeted .npz reference trajectories
+│   ├── walk_01.npz
+│   ├── sit_01.npz
+│   └── ...
+└── motion_clips_raw/              # gitignored: original .mp4 + .json sidecars
+    ├── pexels_4827593.mp4
+    ├── pexels_4827593.json
+    └── ...
 ```
 
-Raw clips go to Cloudflare R2. Processed (pose + labels) goes to Hugging Face.
+The retargeted `.npz` files are what AMP trains on. The raw `.mp4` files are
+kept locally for reproducibility but not pushed to HF.

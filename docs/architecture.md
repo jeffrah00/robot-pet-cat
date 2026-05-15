@@ -1,75 +1,113 @@
 # Architecture
 
-## Two-tier policy split
+The cat is a three-tier learning stack. The split is deliberate: each tier has
+a different training signal, a different reward function, and a different time
+constant.
 
-We separate *how to move* from *what to do*.
+## Three tiers
 
-- **Low level (50 Hz)** — a PPO policy trained in sim takes a velocity command
-  `(vx, vy, ωz)` plus proprioception (joint angles/velocities, IMU) and outputs
-  joint torques. This is the standard quadruped locomotion problem; lots of
-  prior art.
-- **High level (5 Hz)** — a fine-tuned SmolVLA takes the cat's onboard camera
-  frame + recent history + a goal token (e.g. `"explore"`, `"rest"`, `"follow"`)
-  and outputs a high-level command vector: velocity setpoint, gait choice,
-  head/tail pose. This is what we learn from cat videos.
+### Tier 1 — motion (50 Hz)
 
-Why split? Cat videos contain no joint-torque labels. Web data tells us **what a
-cat does** in different situations; it cannot tell us **how to balance**.
+An AMP-trained PPO policy. Inputs: proprioception (joint angles, joint
+velocities, IMU) + a low-dim command vector (velocity setpoint, gait flag,
+head pose, body height). Outputs: joint torques.
+
+What this tier learns: *how to move like a cat*. The style discriminator
+biases the policy distribution toward cat motion clips — slow weight-shifts,
+soft landings, settling motions when stationary, anticipatory crouches.
+
+It does NOT learn what to do. It just makes any commanded motion look catty.
+
+### Tier 2 — skills (10-20 Hz)
+
+A library of subgoal-conditioned policies. Each takes the robot observation +
+a small structured goal and emits the Tier-1 command vector. Examples:
+
+- `WalkTo(target_xy)` — emit velocity commands pointing at the target
+- `Sit()` — emit a held crouched-low command
+- `JumpTo(surface_xyz)` — curriculum-learned jump sequence
+- `Swat(object_xyz)` — approach + paw-lift command sequence
+
+Skills are RL-trained with skill-specific task reward + the shared AMP style
+reward inherited from Tier 1. They look cat-like because Tier 1 makes
+everything look cat-like.
+
+### Tier 3 — brain (0.3-1 Hz)
+
+A high-level RL policy that picks which skill to invoke. Inputs: first-person
+camera frame (or privileged scene state during training) + last-skill identity
++ a six-dim mood latent. Outputs: skill_id (categorical) + target (continuous).
+
+The brain optimizes a *composite* reward:
+
+```
+total_reward(t) = w_curiosity(mood) * R_curiosity(t)
+                + w_comfort(mood)   * R_comfort(t)
+                + w_play(mood)      * R_play(t)
+```
+
+Each weight is a sigmoid function of one mood-latent dimension. The mood
+itself drifts under Ornstein-Uhlenbeck dynamics over minutes of sim time.
+This is what produces session-to-session behavioral variation.
 
 ## Data flow at inference
 
 ```
-camera frame  ─┐
-goal token    ─┼──► SmolVLA ──► HighLevelCommand ──► PPO policy ──► torques ──► MuJoCo
-proprioception ┘                                         ▲
-                                                         │
-                                          (proprioception loop runs at 50 Hz,
-                                           VLA is queried at 5 Hz; command is
-                                           held between updates)
+        camera frame ─┐
+        scene state  ─┼─► brain (0.3-1 Hz) ─► skill_id, target
+        mood latent  ─┘                        │
+                                               ▼
+                                   skill (10-20 Hz) ─► velocity, gait, head pose
+                                                       │
+                                                       ▼
+                                          motion (50 Hz) ─► joint torques
+                                                            │
+                                                            ▼
+                                                       MuJoCo
 ```
 
-## Data flow at training
+Each tier runs at its own rate. Tier outputs are held between updates.
 
-Two independent pipelines:
+## Why this produces "cat-like" behavior rather than "scripted robot"
 
-```
-Phase 2 (sim-only):                Phase 3+4 (web + sim):
-  random init                        cat videos
-      │                                  │
-      ▼                                  ▼
-  PPO in MuJoCo                    yt-dlp + filter
-      │                                  │
-      ▼                                  ▼
-  Go2 locomotion policy           pose extraction (MMPose)
-  (HF: <user>/go2-locomotion)            │
-                                         ▼
-                                   behavior labels +
-                                   inferred high-level cmds
-                                         │
-                                         ▼
-                                   SmolVLA fine-tune
-                                   (HF: <user>/smolvla-cat)
-```
+Three claims, one per tier:
 
-## Inferring high-level commands from video
+1. **Motion looks like a cat** because the AMP style discriminator scored
+   cat clips during training. There are no scripted joint trajectories. The
+   policy *generates* the gait, conditioned on the style.
 
-This is the trickiest step. We don't have ground truth, so we approximate:
+2. **Behavior emerges, doesn't get listed** because Tier 3 is plain RL, not a
+   finite state machine. The cat sits by the window *because* the comfort
+   reward gradient there is positive, not because we wrote
+   `if near_window: sit()`. Add a fireplace and the cat will start sitting
+   near the fireplace too without code changes.
 
-1. Run pose estimation per frame → 2D keypoints (head, spine, four paws, tail).
-2. Fit a simple kinematic prior to recover smoothed 3D body velocity and
-   orientation.
-3. Use velocity magnitude + gait-frequency analysis to label gait (stand /
-   walk / trot / crouch / leap).
-4. Use head pitch from keypoints directly; same for tail base angle.
-5. The clustered behavior class (sit, groom, pounce, etc.) becomes the goal
-   token that conditions training.
+3. **Behavior shifts over a session** because the mood latent drifts. Same
+   cat, same room, different behavior at minute 1 vs minute 30.
 
-This is noisy. That's fine — the VLA learns the distribution, not exact labels.
+## What we don't claim
+
+- We don't claim cat-accurate. We claim cat-styled.
+- We don't claim domain transfer to real Go2. That's a later phase.
+- We don't claim every emergent behavior will be desirable. Reward shaping
+  takes iteration. Expect a phase of "the cat will not stop jumping" before
+  things settle.
+
+## References
+
+- AMP: [Peng et al. 2021](https://xbpeng.github.io/projects/AMP/) for the
+  style-prior training recipe
+- Quadruped-from-mocap retargeting: [Peng et al. 2020](https://xbpeng.github.io/projects/Robotic_Imitation/index.html)
+- Curiosity reward: [Pathak et al. 2017 ICM](https://arxiv.org/abs/1705.05363)
+  and [Burda et al. 2018](https://arxiv.org/abs/1808.04355) for the
+  large-scale study of curiosity-driven learning
+- Jump skill: [Atanassov et al. 2024](https://arxiv.org/abs/2401.16337)
 
 ## Sim → real (much later)
 
 Out of scope for v1. Notes for future-us:
-- Domain randomization in Phase 2 already covers friction/mass/latency.
-- For real Go2, hardware deployment uses Unitree's SDK; the locomotion policy
-  needs to be exported to TorchScript and the action latency budget shrinks.
-- The VLA would run on a host laptop and stream commands over UDP.
+- AMP-trained policies tend to transfer better than vanilla PPO because the
+  style prior implicitly regularizes toward smoother motions
+- Domain randomization in Tier 1 (friction, mass, latency) is the standard
+  trick; do this before any hardware attempt
+- The mood latent stays in software; only the joint commands go to hardware

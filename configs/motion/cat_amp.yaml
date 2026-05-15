@@ -1,8 +1,8 @@
-# Low-level PPO config for Unitree Go2 walking in MuJoCo Playground.
+# Tier 1 — AMP-trained cat-style locomotion on Unitree Go2.
 # Numbers are sensible defaults; tune in Phase 2.
 
 env:
-  name: Go2Joystick           # mujoco_playground task id
+  name: Go2Joystick           # mujoco_playground task id, wrapped with AMP rewards
   num_envs: 4096
   episode_length_s: 20
   action_repeat: 1
@@ -10,6 +10,14 @@ env:
     vx: [-1.0, 1.5]
     vy: [-0.5, 0.5]
     yaw: [-1.0, 1.0]
+
+amp:
+  motion_clips_dir: data/motion_clips        # retargeted .npz files
+  discriminator_hidden_sizes: [1024, 512]
+  discriminator_lr: 1.0e-4
+  style_reward_weight: 2.0                   # weight on log D(s, s')
+  task_reward_weight: 1.0
+  replay_buffer_size: 1_000_000
 
 ppo:
   total_timesteps: 50_000_000
@@ -38,8 +46,12 @@ domain_randomization:
 
 logging:
   wandb_project: robot-pet-cat
-  wandb_run_name: go2-joystick-v1
+  wandb_run_name: cat-amp-v1
   eval_interval_steps: 500_000
   checkpoint_interval_steps: 2_000_000
+
+output:
+  hf_repo: ${HF_USERNAME}/go2-cat-motion
+  push_to_hub: true
 
 seed: 0

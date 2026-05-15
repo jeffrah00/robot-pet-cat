@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "robot-pet-cat"
 version = "0.0.1"
-description = "Simulated robot pet cat: quadruped + VLA, trained from cat videos."
+description = "Simulated robot pet cat: AMP-trained quadruped + curiosity-driven brain with mood."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "Jeff" }]
 
-# Core deps kept light. Heavier deps (training, VLA, pose) live in extras so the
-# package installs quickly on machines that only need part of the stack.
+# Core deps kept light. Heavier deps (training, retargeting) live in extras so
+# the package installs quickly on machines that only need part of the stack.
 dependencies = [
     "numpy>=1.26",
     "mujoco>=3.2",
@@ -23,8 +23,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Low-level locomotion training (RL)
-locomotion = [
+# Tier 1 motion: AMP-style RL on top of MuJoCo Playground.
+motion = [
     "torch>=2.3",
     "jax[cuda12]>=0.4.30; sys_platform == 'linux'",
     "jax>=0.4.30; sys_platform != 'linux'",
@@ -34,27 +34,24 @@ locomotion = [
     "wandb>=0.17",
 ]
 
-# High-level VLA
-vla = [
+# Tier 2 skills + Tier 3 brain: share the same RL stack.
+brain = [
     "torch>=2.3",
-    "transformers>=4.44",
-    "accelerate>=0.33",
-    "lerobot @ git+https://github.com/huggingface/lerobot.git",
+    "wandb>=0.17",
     "huggingface-hub>=0.24",
-    "datasets>=2.20",
-    "pillow>=10.3",
 ]
 
-# Cat-video data pipeline
-data = [
+# Motion-clip pose extraction + retargeting (one-shot pipeline, ~10-30 clips).
+retargeting = [
     "yt-dlp>=2024.8",
     "opencv-python>=4.10",
     "ffmpeg-python>=0.2",
-    "mmpose>=1.3; sys_platform == 'linux'",
-    "boto3>=1.34",  # for Cloudflare R2 / S3-compatible
+    # BARC / SMAL repos are installed from source per their READMEs; not here.
+    "trimesh>=4.0",
+    "scipy>=1.13",
 ]
 
-# Dev tooling
+# Dev tooling.
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
