@@ -1,0 +1,9 @@
+# Minimal install for poking around the sim on a laptop.
+# For full training/VLA/data deps install via:
+#   pip install -e ".[locomotion,vla,data,dev]"
+numpy>=1.26
+mujoco>=3.2
+pyyaml>=6.0
+tqdm>=4.66
+python-dotenv>=1.0
+rich>=13.7
