@@ -141,10 +141,17 @@ def load_keypoints_json(path: Path) -> KeypointClip:
       }
     """
     data = json.loads(Path(path).read_text())
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"{path} is not a project keypoint JSON "
+            f"(top level is {type(data).__name__}, expected dict)"
+        )
     if data.get("keypoint_names") not in (None, KP_NAMES):
         raise ValueError(
             f"keypoint_names mismatch in {path}; expected {KP_NAMES}"
         )
+    if "frames" not in data:
+        raise ValueError(f"{path} is missing required 'frames' field")
     frames = data["frames"]
     kps = np.array([f["keypoints"] for f in frames], dtype=np.float64)
     if kps.ndim != 3 or kps.shape[1:] != (N_KP, 2):
@@ -350,12 +357,22 @@ def process_directory(in_dir: Path, out_dir: Path) -> list[Path]:
     in_dir = Path(in_dir)
     out_dir = Path(out_dir)
     written = []
+    skipped = []
     for json_path in sorted(in_dir.glob("*.json")):
-        clip = load_keypoints_json(json_path)
+        try:
+            clip = load_keypoints_json(json_path)
+        except (ValueError, KeyError) as e:
+            # Likely a sidecar / metadata json (e.g., from DLC). Skip silently.
+            skipped.append((json_path.name, str(e).split(chr(10))[0][:80]))
+            continue
         data = retarget_clip(clip)
         out_path = out_dir / f"{json_path.stem}.npz"
         write_npz(out_path, data)
         written.append(out_path)
+    if skipped:
+        print(f"[retarget] skipped {len(skipped)} non-schema json(s):")
+        for name, reason in skipped:
+            print(f"           {name}: {reason}")
     return written
 
 
