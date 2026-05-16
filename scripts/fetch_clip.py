@@ -163,7 +163,12 @@ def main() -> int:
     print(f"[fetch] wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
 
     if args.then_extract:
-        cmd = [sys.executable, "scripts/extract_keypoints.py", str(out)]
+        # Prefer the venv's python over sys.executable so the chain works
+        # even if fetch_clip.py was invoked with the system python.
+        from pathlib import Path as _P
+        venv_py = _P.cwd() / ".venv" / "bin" / "python"
+        py = str(venv_py) if venv_py.exists() else sys.executable
+        cmd = [py, "scripts/extract_keypoints.py", str(out)]
         print("[fetch] chaining ->", " ".join(cmd))
         subprocess.run(cmd, check=True)
     return 0
