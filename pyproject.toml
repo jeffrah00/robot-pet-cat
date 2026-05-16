@@ -48,12 +48,14 @@ retargeting = [
     "scipy>=1.13",
 ]
 
-# Real pose extraction from .mp4 (DLC SuperAnimal-Quadruped).
-# Heavier dep set; deeplabcut transitively brings in pytables/pandas so we
-# don't pin them here (DLC 2.3.x pins tables==3.8.0 and conflicts otherwise).
+# Real pose extraction from .mp4 via OpenPifPaf (works on Python 3.11/3.12).
+# We previously used deeplabcut, but DLC 2.3.x pins tables==3.8.0 which fails
+# to compile on 3.12. OpenPifPaf has the AnimalPose plugin trained on cats.
 pose = [
-    "deeplabcut>=2.3.11",
+    "openpifpaf>=0.13",
+    "openpifpaf-animalpose>=0.1; sys_platform == 'linux'",
     "opencv-python>=4.10",
+    "torch>=2.3",
 ]
 
 # Dev tooling.
