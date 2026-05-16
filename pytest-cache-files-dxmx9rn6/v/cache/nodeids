@@ -1,0 +1,11 @@
+[
+  "tests/test_retargeting.py::test_fixture_schema",
+  "tests/test_retargeting.py::test_joint_limits_respected",
+  "tests/test_retargeting.py::test_loader_shape",
+  "tests/test_retargeting.py::test_pipeline_output_shape",
+  "tests/test_retargeting.py::test_process_directory_writes_npz",
+  "tests/test_retargeting.py::test_quaternion_unit_norm",
+  "tests/test_retargeting.py::test_root_above_floor",
+  "tests/test_retargeting.py::test_synth_seed_is_deterministic",
+  "tests/test_retargeting.py::test_velocity_is_finite_diff_of_position"
+]

@@ -67,7 +67,7 @@ See [`docs/stack.md`](docs/stack.md) for the rationale and what was rejected.
 # 1. clone and install
 git clone git@github.com:jeffrah00/robot-pet-cat.git
 cd robot-pet-cat
-python -m venv .venv && source .venv/bin/activate
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 # 2. log in

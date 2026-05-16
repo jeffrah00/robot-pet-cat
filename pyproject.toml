@@ -8,11 +8,12 @@ version = "0.0.1"
 description = "Simulated robot pet cat: AMP-trained quadruped + curiosity-driven brain with mood."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{ name = "Jeff" }]
 
-# Core deps kept light. Heavier deps (training, retargeting) live in extras so
-# the package installs quickly on machines that only need part of the stack.
+# Core deps kept light. Heavier deps (training, retargeting, pose) live in
+# extras so the package installs quickly on machines that only need part of
+# the stack.
 dependencies = [
     "numpy>=1.26",
     "mujoco>=3.2",
@@ -41,14 +42,19 @@ brain = [
     "huggingface-hub>=0.24",
 ]
 
-# Motion-clip pose extraction + retargeting (one-shot pipeline, ~10-30 clips).
+# Retargeting math (Phase 2a, no perception model needed for tests/synth).
 retargeting = [
-    "yt-dlp>=2024.8",
     "opencv-python>=4.10",
-    "ffmpeg-python>=0.2",
-    # BARC / SMAL repos are installed from source per their READMEs; not here.
-    "trimesh>=4.0",
     "scipy>=1.13",
+]
+
+# Real pose extraction from .mp4 (DLC SuperAnimal-Quadruped).
+# Heavier dep set; only install on machines that will actually run perception.
+pose = [
+    "deeplabcut>=2.3.11",
+    "opencv-python>=4.10",
+    "pandas>=2.0",
+    "tables>=3.9",
 ]
 
 # Dev tooling.
@@ -69,7 +75,7 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

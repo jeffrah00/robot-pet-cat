@@ -1,17 +1,17 @@
 # Retargeting: 2D cat keypoints to Go2 reference trajectories
 
-This doc covers the Phase 2a MVP pipeline that lives in
-`src/robot_pet_cat/retargeting.py`. It takes a JSON of 2D keypoints from a
-side-view cat video and produces a Go2 `.npz` reference trajectory consumable
-by the AMP trainer.
+This doc covers the Phase 2a pipeline that lives in
+`src/robot_pet_cat/retargeting.py` (and the optional `pose_extraction.py`
+front-end). It takes a JSON of 2D keypoints from a side-view cat video and
+produces a Go2 `.npz` reference trajectory consumable by the AMP trainer.
 
-The MVP intentionally separates perception (your problem) from retargeting
-(this module's problem). Drop-in perception models are listed at the bottom.
+The pipeline intentionally separates perception (DLC SuperAnimal or your own
+choice) from retargeting (this project's math).
 
 ## End-to-end use
 
 ```bash
-# 1. (Optional) regenerate the synthetic-walk fixture for sanity check
+# 1. (Optional, no perception needed) regenerate the synthetic walk fixture
 python -c "from robot_pet_cat.retargeting import write_synth_walk; \
   write_synth_walk('data/motion_clips_raw/synth_walk.json')"
 
@@ -53,7 +53,7 @@ FR_hip_x, FR_hip_y, FR_knee, RL_..., RR_...]`.
 ```
 
 Coordinates are image-space pixels with origin at top-left (standard OpenCV).
-`scale_m_per_px` is the size of one pixel in world meters — measure this once
+`scale_m_per_px` is the size of one pixel in world meters -- measure this once
 per clip by knowing the cat's body length (typical housecat: 0.45 m withers-
 to-hips). `floor_y_px` is the image y-coordinate of the floor at the cat's
 position; this defines world z=0.
@@ -106,7 +106,8 @@ keypoint detector and no manual mocap." Specific compromises:
 4. **Cat-to-Go2 scale is implicit.** We use `GO2.nominal_height_m` as a soft
    floor for trunk height, so a too-tall cat ends up with fully-extended legs
    (knee saturated at `GO2.knee_max`). Real fix: compute a per-clip scale
-   factor from the cat's withers-to-hips distance.
+   factor from the cat's withers-to-hips distance (already done by
+   pose_extraction.py).
 5. **No contact constraints.** The IK places paws at whatever world position
    the keypoint says, even if that's underground or floating. Real fix:
    project paws onto a contact plane during stance phases.
@@ -117,9 +118,9 @@ which uses these clips as a distribution to match, not trajectories to track.
 
 ## Validating with the synthetic fixture
 
-The module includes `synth_cat_walk()`, a procedural 1-second cat trot. The
-fixture is committed at `data/motion_clips_raw/synth_walk.json` and is the
-basis of all the tests in `tests/test_retargeting.py`:
+The retargeting module includes `synth_cat_walk()`, a procedural 1-second cat
+trot. The fixture is committed at `data/motion_clips_raw/synth_walk.json` and
+is the basis of all the tests in `tests/test_retargeting.py`:
 
 ```bash
 PYTHONPATH=src pytest tests/test_retargeting.py -v --basetemp=/tmp/pytest-rpc
@@ -131,46 +132,70 @@ Windows-mounted workspace; on a Linux/macOS box you can drop it.)
 If you change anything in the math, those tests catch regressions before the
 output looks subtly wrong on real clips.
 
-## Plugging in real perception
+## Real perception: DLC SuperAnimal-Quadruped (recommended path)
 
-Replace the JSON-loading step with one of these:
+The MVP ships with a working perception front-end. It uses [DeepLabCut
+SuperAnimal-Quadruped](https://huggingface.co/mwmathis/DeepLabCutModelZoo-SuperAnimal-Quadruped),
+a model trained on 40K+ images of four-legged animals (cats, dogs, horses,
+mice, etc.). No per-clip training needed.
 
-### SuperAnimal-Quadruped (DeepLabCut)
+### One-clip workflow
 
-Best off-the-shelf option for animal pose in May 2026. Universal model
-covering cats, dogs, horses; no training needed.
+```bash
+# 1. Install the pose extras (heavy: deeplabcut + opencv + pandas + tables).
+pip install -e ".[pose]"
 
-```python
-import deeplabcut as dlc
-config = dlc.create_pretrained_project(
-    ProjectName="cat-superanimal",
-    Experimenter="jeffrah00",
-    videos=["data/motion_clips_raw/your_clip.mp4"],
-    model="superanimal_quadruped",
-)
-dlc.analyze_videos(config, ...)
-# Then read the resulting .h5 and translate to our keypoint JSON schema.
+# 2. Find a side-view Pexels clip. Suggested filters:
+#    - single cat in frame
+#    - mostly walking or trotting, side view
+#    - 3-10 seconds
+#    - 720p or 1080p
+#    Save to data/motion_clips_raw/<name>.mp4.
+
+# 3. Run pose extraction. SuperAnimal weights download from HF on first run
+#    (~700 MB) and the script outputs our JSON schema.
+python scripts/extract_keypoints.py \
+    data/motion_clips_raw/your_clip.mp4 \
+    --out data/motion_clips_raw/your_clip.json
+
+# 4. Retarget into Go2 .npz reference trajectory.
+rpc retarget --clips data/motion_clips_raw --out data/motion_clips
 ```
 
-Pros: works on cats out of the box; 39 keypoints, more than we need.
-Cons: heavyweight install (`deeplabcut` pulls in tensorflow).
+The pose-extraction step does these things, all visible in
+`src/robot_pet_cat/pose_extraction.py`:
 
-### MMPose AnimalPose
+1. Runs `deeplabcut.video_inference_superanimal` on the clip.
+2. Loads the resulting `.h5`, drops detections below `--pcutoff` (default 0.4).
+3. Maps SuperAnimal's 39-keypoint output to our 12 (table at top of the
+   module -- edit if your DLC version uses different bodypart names).
+4. Linearly interpolates over any NaN gaps from low-confidence frames.
+5. Auto-computes `scale_m_per_px` from the median withers-to-hips distance
+   in pixels, assuming a typical 0.45 m housecat. Override with
+   `--body-length-m` if your cat is unusually large/small.
+6. Auto-computes `floor_y_px` from the lowest paw observed in the clip.
+   Override with `--floor-y` if your clip has a complex scene.
 
-```python
-from mmpose.apis import init_model, inference_topdown
-model = init_model(
-    config="configs/animal_2d_keypoint/animalpose-hrnet-w48.py",
-    checkpoint="...",
-)
-results = inference_topdown(model, img)
-# results[0].pred_instances.keypoints -> (1, 20, 2)
-```
+### Tuning knobs that matter
 
-Pros: lighter than DLC; well-maintained.
-Cons: 20-keypoint format needs mapping to our 12-keypoint convention.
+- **`--pcutoff`**: lower (0.2) keeps more keypoints at the cost of noise;
+  higher (0.6) is cleaner but leaves more NaN gaps to interpolate over. 0.4
+  is a sensible default for clear side-view footage.
+- **Picking the clip**: SuperAnimal works dramatically better on side-view
+  footage of a single cat than on top-down or busy scenes. Side view is also
+  what our side-view-assumption lift expects, so it's a happy alignment.
+- **Body length sanity check**: after running, eyeball the printed
+  `scale = ... m/px`. Multiply by typical paw-to-paw distance in the clip;
+  should be ~0.4-0.8 m for a real cat. If it's way off, override
+  `--body-length-m`.
 
-### BARC (3D, future upgrade)
+### Fallback: MMPose AnimalPose
+
+Lighter install than DLC. Trained on a smaller dataset. Plug in by writing
+your own `mmpose_to_project_keypoints()` equivalent -- the retargeting module
+doesn't care about the upstream detector, just the JSON.
+
+### Future upgrade: BARC (3D pose)
 
 If we want real 3D pose without the side-view assumption, BARC fits a
 parametric cat mesh (SMAL-derived) to a video.
@@ -178,7 +203,7 @@ parametric cat mesh (SMAL-derived) to a video.
 - Page: https://barc.is.tue.mpg.de/
 - Replaces both `load_keypoints_json` and `lift_to_world`. The retargeting
   step still applies but operates on 3D positions directly.
-- This is the right upgrade once the MVP is working end-to-end.
+- Right upgrade once the side-view MVP hits its limits.
 
 ## Where this goes next
 
