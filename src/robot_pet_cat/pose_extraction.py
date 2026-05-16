@@ -109,11 +109,13 @@ def run_superanimal(cfg: ExtractConfig):
         raise FileNotFoundError(cfg.video_path)
 
     print(f"[pose] running DLC SuperAnimal on {cfg.video_path}")
-    # DLC 2.3.x signature: model is implicit in superanimal_name;
-    # no model_name/detector_name kwargs (those are DLC 3.x).
+    # DLC 3.x signature: explicit model + detector names. (DLC 2.3.x doesn't
+    # accept these and the model is implicit; we're on 3.x via conda env.)
     deeplabcut.video_inference_superanimal(
         videos=[str(cfg.video_path)],
         superanimal_name=cfg.superanimal,
+        model_name=cfg.model_name,
+        detector_name=cfg.detector_name,
         videotype="mp4",
         video_adapt=False,
         pcutoff=cfg.pcutoff,

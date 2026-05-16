@@ -44,11 +44,11 @@ micromamba env create --name "$ENV_NAME" --file "$DLC_YAML" --yes
 # --- 4. Verify --------------------------------------------------------------
 echo ">>> verifying"
 micromamba run -n "$ENV_NAME" python <<'PY'
-import deeplabcut, tensorflow as tf, numpy as np, pandas as pd
+import deeplabcut, numpy as np, pandas as pd
 print(f"deeplabcut {deeplabcut.__version__}")
-print(f"tensorflow {tf.__version__}")
 print(f"numpy {np.__version__}")
 print(f"pandas {pd.__version__}")
+# DLC 3.x is pure-PyTorch; no TF in this env (intentionally).
 PY
 
 echo
