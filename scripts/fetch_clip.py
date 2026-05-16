@@ -163,18 +163,9 @@ def main() -> int:
     print(f"[fetch] wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
 
     if args.then_extract:
-        # Pose extraction lives in the dedicated .venv-pose (separate from
-        # .venv to avoid the DLC <-> JAX numpy version conflict).
-        from pathlib import Path as _P
-        pose_py = _P.cwd() / ".venv-pose" / "bin" / "python"
-        main_py = _P.cwd() / ".venv" / "bin" / "python"
-        if pose_py.exists():
-            py = str(pose_py)
-        elif main_py.exists():
-            py = str(main_py)
-        else:
-            py = sys.executable
-        cmd = [py, "scripts/extract_keypoints.py", str(out)]
+        # Pose extraction runs in the DLC conda env (created by
+        # scripts/setup_pose_conda.sh). The shell wrapper handles it.
+        cmd = ["bash", "scripts/extract_keypoints.sh", str(out)]
         print("[fetch] chaining ->", " ".join(cmd))
         subprocess.run(cmd, check=True)
     return 0
