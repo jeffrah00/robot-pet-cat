@@ -36,6 +36,9 @@ sed -i "s/^name:.*/name: $ENV_NAME/" "$DLC_YAML"
 echo ">>> creating conda env '$ENV_NAME' (this takes 5-10 min)"
 # -y to skip prompts; --root-prefix isolates state under our project so it's
 # easy to nuke later
+# RunPod base image has shiboken6/PySide6 installed without pip RECORD files,
+# so pip cannot uninstall them. Force pip to skip the uninstall step.
+export PIP_IGNORE_INSTALLED=1
 micromamba env create --name "$ENV_NAME" --file "$DLC_YAML" --yes
 
 # --- 4. Verify --------------------------------------------------------------
