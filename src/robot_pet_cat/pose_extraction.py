@@ -21,8 +21,14 @@ schema is important.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
+
+# Force TensorFlow to use the legacy Keras 2 backend via tf_keras. TF 2.16+
+# ships Keras 3 by default, which removed tf.compat.v1.layers.BatchNormalization
+# that DLC 2.3.x relies on. MUST be set before any import of tensorflow.
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
 import numpy as np
 
