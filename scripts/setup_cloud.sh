@@ -1,18 +1,43 @@
 #!/usr/bin/env bash
-# Run this on a fresh RunPod / Lambda Labs Ubuntu 22.04 box to set things up.
+# Run this on a fresh RunPod / Lambda Labs Ubuntu 22.04+ box.
 # Assumes you've SSH'd in and cloned the repo.
+#
+# mujoco_playground requires Python >= 3.11. We auto-detect: if python3.11 or
+# python3.12 is already on the box (common in recent RunPod PyTorch templates),
+# we use that. Otherwise we add deadsnakes and install 3.11.
 
 set -euo pipefail
 
-echo ">>> apt deps"
+# Find a usable Python (3.11 or 3.12). Empty if none found.
+detect_py() {
+  for p in python3.12 python3.11; do
+    if command -v "$p" >/dev/null 2>&1; then echo "$p"; return; fi
+  done
+}
+
+PY="$(detect_py)"
+
+if [[ -z "$PY" ]]; then
+  echo ">>> no python3.11+ found, installing 3.11 from deadsnakes"
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends software-properties-common
+  sudo add-apt-repository -y ppa:deadsnakes/ppa
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends \
+    python3.11 python3.11-venv python3.11-dev
+  PY="python3.11"
+fi
+echo ">>> using $PY ($("$PY" --version))"
+
+echo ">>> apt deps (build tools, ffmpeg, GL)"
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
-  git git-lfs python3.10-venv python3-pip \
+  git git-lfs python3-pip \
   ffmpeg libgl1 libglib2.0-0 libegl1 \
   build-essential cmake
 
 echo ">>> python venv"
-python3.10 -m venv .venv
+"$PY" -m venv .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
 pip install --upgrade pip wheel
@@ -20,7 +45,7 @@ pip install --upgrade pip wheel
 echo ">>> project (motion + brain + dev extras)"
 pip install -e ".[motion,brain,dev]"
 
-echo ">>> HF + W&B login (interactive)"
+echo ">>> HF + W&B login"
 if [[ -f .env ]]; then
   # shellcheck disable=SC1091
   set -a; source .env; set +a
