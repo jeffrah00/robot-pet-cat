@@ -163,11 +163,17 @@ def main() -> int:
     print(f"[fetch] wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
 
     if args.then_extract:
-        # Prefer the venv's python over sys.executable so the chain works
-        # even if fetch_clip.py was invoked with the system python.
+        # Pose extraction lives in the dedicated .venv-pose (separate from
+        # .venv to avoid the DLC <-> JAX numpy version conflict).
         from pathlib import Path as _P
-        venv_py = _P.cwd() / ".venv" / "bin" / "python"
-        py = str(venv_py) if venv_py.exists() else sys.executable
+        pose_py = _P.cwd() / ".venv-pose" / "bin" / "python"
+        main_py = _P.cwd() / ".venv" / "bin" / "python"
+        if pose_py.exists():
+            py = str(pose_py)
+        elif main_py.exists():
+            py = str(main_py)
+        else:
+            py = sys.executable
         cmd = [py, "scripts/extract_keypoints.py", str(out)]
         print("[fetch] chaining ->", " ".join(cmd))
         subprocess.run(cmd, check=True)
