@@ -7,6 +7,12 @@
 #   - deeplabcut 2.3.x (the SuperAnimal entry point) is only tested against
 #     Python 3.10/3.11. On 3.12, its pinned tables==3.8.0 tries to compile
 #     blosc2 from source and fails. So we cap at 3.11 until DLC 3.x ships.
+#
+# Why we pin setuptools<70:
+#   - setuptools >=80 (early 2025) stopped shipping pkg_resources by default.
+#   - openpifpaf's setup.py imports pkg_resources at build time.
+#   - PIP_CONSTRAINT is the right hammer: it pins setuptools both in the venv
+#     and in pip's PEP 517 isolated build environments.
 
 set -euo pipefail
 
@@ -46,7 +52,15 @@ echo ">>> python venv"
 "$PY" -m venv .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install --upgrade pip wheel && pip install "setuptools<70"
+
+echo ">>> pin setuptools<70 (>=80 dropped pkg_resources, breaks openpifpaf build)"
+# This constraints file applies to ALL pip invocations in this shell -- both
+# the venv-level install and any PEP 517 isolated build envs.
+cat > /tmp/rpc-constraints.txt <<'CON'
+setuptools<70
+CON
+export PIP_CONSTRAINT=/tmp/rpc-constraints.txt
+pip install --upgrade pip wheel "setuptools<70"
 
 echo ">>> project (motion + brain + dev extras)"
 pip install -e ".[motion,brain,dev]"
@@ -69,4 +83,4 @@ echo ">>> smoke test"
 python -m robot_pet_cat.cli sim --steps 100
 
 echo "Done. Next: bash scripts/train_motion.sh"
-echo "       (or: pip install -e \".[pose]\"  for the pose extractor)"
+echo "       (or: PIP_CONSTRAINT=/tmp/rpc-constraints.txt pip install -e \".[pose]\" )"
