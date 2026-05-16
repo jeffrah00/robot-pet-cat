@@ -36,7 +36,7 @@ echo ">>> tensorflow 2.10-2.12 (Keras 2; avoids 2.13+ Keras 3 issues)"
 pip install "tensorflow>=2.10,<2.13"
 
 echo ">>> DLC hidden runtime deps"
-pip install tf_keras tensorpack tf_slim
+pip install "tf_keras>=2.15,<2.17" tensorpack tf_slim
 
 echo ">>> deeplabcut + opencv"
 pip install "deeplabcut>=2.3.11" "opencv-python>=4.10"
