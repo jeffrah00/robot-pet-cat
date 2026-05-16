@@ -126,12 +126,8 @@ def push(
     for f in files:
         rel = repo_relative(f, repo_root)
         if not f.exists():
-            # Treat missing as deletion.
             tree_entries.append({
-                "path": rel,
-                "mode": "100644",
-                "type": "blob",
-                "sha": None,
+                "path": rel, "mode": "100644", "type": "blob", "sha": None,
             })
             print(f"[push] D  {rel}")
             continue
@@ -145,10 +141,7 @@ def push(
             "encoding": "base64",
         })
         tree_entries.append({
-            "path": rel,
-            "mode": "100644",
-            "type": "blob",
-            "sha": blob["sha"],
+            "path": rel, "mode": "100644", "type": "blob", "sha": blob["sha"],
         })
         print(f"[push] M  {rel}  ({len(content)} bytes)  blob {blob['sha'][:8]}")
 
@@ -156,20 +149,15 @@ def push(
         print(f"[push] DRY RUN: would commit {len(tree_entries)} files: {message!r}")
         return "DRYRUN"
 
-    # 3. Create new tree based on the existing one.
     tree = gh("POST", f"/repos/{repo}/git/trees", token, body={
         "base_tree": base_tree_sha,
         "tree": tree_entries,
     })
-
-    # 4. Create commit.
     commit = gh("POST", f"/repos/{repo}/git/commits", token, body={
         "message": message,
         "tree": tree["sha"],
         "parents": [head_sha],
     })
-
-    # 5. Update branch ref.
     gh("PATCH", f"/repos/{repo}/git/refs/heads/{branch}", token, body={
         "sha": commit["sha"],
     })
@@ -183,8 +171,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("files", nargs="+", type=Path,
                    help="Files to push (paths relative to repo root or absolute).")
-    p.add_argument("-m", "--message", required=True,
-                   help="Commit message.")
+    p.add_argument("-m", "--message", required=True, help="Commit message.")
     p.add_argument("--repo", default=os.environ.get("GITHUB_REPO", DEFAULT_REPO),
                    help=f"owner/name (default: {DEFAULT_REPO}).")
     p.add_argument("--branch", default=os.environ.get("GITHUB_BRANCH", DEFAULT_BRANCH),

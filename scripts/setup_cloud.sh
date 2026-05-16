@@ -46,7 +46,7 @@ echo ">>> python venv"
 "$PY" -m venv .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install --upgrade pip wheel
+pip install --upgrade pip setuptools wheel
 
 echo ">>> project (motion + brain + dev extras)"
 pip install -e ".[motion,brain,dev]"
