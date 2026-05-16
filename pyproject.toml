@@ -11,9 +11,6 @@ license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [{ name = "Jeff" }]
 
-# Core deps kept light. Heavier deps (training, retargeting, pose) live in
-# extras so the package installs quickly on machines that only need part of
-# the stack.
 dependencies = [
     "numpy>=1.26",
     "mujoco>=3.2",
@@ -24,7 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Tier 1 motion: AMP-style RL on top of MuJoCo Playground.
 motion = [
     "torch>=2.3",
     "jax[cuda12]>=0.4.30; sys_platform == 'linux'",
@@ -35,29 +31,26 @@ motion = [
     "wandb>=0.17",
 ]
 
-# Tier 2 skills + Tier 3 brain: share the same RL stack.
 brain = [
     "torch>=2.3",
     "wandb>=0.17",
     "huggingface-hub>=0.24",
 ]
 
-# Retargeting math (Phase 2a, no perception model needed for tests/synth).
 retargeting = [
     "opencv-python>=4.10",
     "scipy>=1.13",
 ]
 
-# Real pose extraction from .mp4 via OpenPifPaf.
-# The animalpose checkpoint comes via openpifpaf's built-in model downloader,
-# no separate plugin install needed.
+# Real pose extraction via DLC SuperAnimal-Quadruped.
+# Works on Python 3.11 with setuptools<70 pinned (see setup_cloud.sh).
+# Tables/pandas come along transitively; do not pin them here (DLC 2.3.x
+# pins tables==3.8.0 and conflicts otherwise).
 pose = [
-    "openpifpaf>=0.13",
+    "deeplabcut>=2.3.11",
     "opencv-python>=4.10",
-    "torch>=2.3",
 ]
 
-# Dev tooling.
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

@@ -1,25 +1,21 @@
-"""Extract 2D cat keypoints from a video using OpenPifPaf's animal-pose model.
+"""Extract 2D cat keypoints from a video using DeepLabCut SuperAnimal-Quadruped.
 
-This bridges raw .mp4 -> our 12-keypoint JSON schema consumed by the retargeting
-module.
+We tried OpenPifPaf first because it's lighter, but openpifpaf 0.13.x has
+unfixable Python-3.11+ build issues (pins torch==1.12.1 at build time, no
+wheels for modern Python). DLC SuperAnimal-Quadruped is the second choice:
+heavier install, but the install path on Python 3.11 with setuptools<70 is
+known-good. Trained on 40K+ animal images including cats.
 
-Why OpenPifPaf and not DLC SuperAnimal:
-  - DLC 2.3.x pins tables==3.8.0, which has no Python 3.12 wheel and fails to
-    compile blosc2 from source. We'd have to downgrade to 3.11.
-  - OpenPifPaf installs cleanly on 3.11/3.12, has an animal-pose plugin
-    explicitly trained on cats (alongside dogs/sheep/horses/cows), and is
-    PyTorch-only with no HDF5 deps.
+Pipeline:
+  - deeplabcut.video_inference_superanimal(...) on the clip
+  - Read the resulting .h5 with pandas
+  - Map SuperAnimal's 39-keypoint bodypart output to our 12-keypoint schema
+  - Linearly interpolate over low-confidence frames
+  - Infer pixel scale + floor y-coordinate
+  - Write our project JSON for retargeting
 
-Trade-off: OpenPifPaf's animal pose model is somewhat less accurate than DLC's
-SuperAnimal-Quadruped (smaller training set), but for AMP's distribution-
-matching use case the gap doesn't matter much.
-
-Alternatives if you need to swap the upstream model:
-  - DeepLabCut SuperAnimal-Quadruped (heavy install, Python <=3.11)
-  - MMPose AnimalPose
-  - BARC for true 3D pose
-The retargeting module doesn't care which detector you used, only the JSON
-schema.
+The retargeting module doesn't care which detector you used; only the JSON
+schema is important.
 """
 
 from __future__ import annotations
@@ -37,31 +33,34 @@ PROJECT_KP_NAMES = [
     "fl_elbow", "fr_elbow", "rl_knee", "rr_knee",
 ]
 
-# OpenPifPaf's animal-pose model uses the AnimalPose dataset's 20-keypoint set:
-#  0 L_Eye    1 R_Eye    2 L_EarBase  3 R_EarBase
-#  4 Nose     5 Throat   6 TailBase   7 Withers
-#  8 L_F_Elbow  9 R_F_Elbow  10 L_B_Elbow  11 R_B_Elbow
-# 12 L_F_Knee  13 R_F_Knee  14 L_B_Knee   15 R_B_Knee
-# 16 L_F_Paw   17 R_F_Paw   18 L_B_Paw    19 R_B_Paw
-#
-# Mapping our 12 -> indices in this 20-keypoint output.
-# We deliberately reuse TailBase for both `hips` and `tail_base`: the
-# retargeting math wants a stable rear-trunk reference, and TailBase is the
-# closest anatomical match. Any subtle offset is absorbed by the AMP
-# discriminator.
-OPENPIFPAF_INDEX_MAP = {
-    "nose":      4,
-    "withers":   7,
-    "hips":      6,    # TailBase used as hips proxy
-    "tail_base": 6,
-    "fl_paw":    16,
-    "fr_paw":    17,
-    "rl_paw":    18,
-    "rr_paw":    19,
-    "fl_elbow":  8,
-    "fr_elbow":  9,
-    "rl_knee":   14,
-    "rr_knee":   15,
+# Map our 12 -> DLC SuperAnimal-Quadruped bodypart names.
+# Lists of candidates are tried in order; the first one present in the DLC
+# output wins. This tolerates small naming drift between DLC versions.
+# SuperAnimal-Quadruped's 39 bodyparts include:
+#   nose, upper_jaw, lower_jaw, mouth_end_right, mouth_end_left,
+#   right_eye, right_earbase, right_earend, left_eye, left_earbase, left_earend,
+#   neck_base, neck_end, throat_base, throat_end,
+#   back_base, back_end, back_middle,
+#   tail_base, tail_end,
+#   front_left_thai, front_left_knee, front_left_paw,
+#   front_right_thai, front_right_knee, front_right_paw,
+#   back_left_thai, back_left_knee, back_left_paw,
+#   back_right_thai, back_right_knee, back_right_paw,
+#   belly_bottom, body_middle_right, body_middle_left
+# (DLC calls the front-leg "elbow" a "knee" -- we map accordingly.)
+SUPERANIMAL_KP_MAP: dict[str, list[str]] = {
+    "nose":      ["nose"],
+    "withers":   ["neck_end", "neck_base", "back_base"],
+    "hips":      ["back_end", "back_middle"],
+    "tail_base": ["tail_base"],
+    "fl_paw":    ["front_left_paw"],
+    "fr_paw":    ["front_right_paw"],
+    "rl_paw":    ["back_left_paw"],
+    "rr_paw":    ["back_right_paw"],
+    "fl_elbow":  ["front_left_knee"],
+    "fr_elbow":  ["front_right_knee"],
+    "rl_knee":   ["back_left_knee"],
+    "rr_knee":   ["back_right_knee"],
 }
 
 
@@ -69,135 +68,104 @@ OPENPIFPAF_INDEX_MAP = {
 class ExtractConfig:
     video_path: Path
     out_json: Path
-    checkpoint: str = "shufflenetv2k30-animalpose"
-    pcutoff: float = 0.4              # drop keypoints with confidence below this
-    sample_every_nth: int = 1         # 1 = every frame, 2 = every other, etc.
-    cat_body_length_m: float = 0.45   # used to auto-compute scale_m_per_px
-    floor_y_px: float | None = None   # if None, inferred from lowest paw y
+    superanimal: str = "superanimal_quadruped"
+    model_name: str = "hrnet_w32"
+    detector_name: str = "fasterrcnn_resnet50_fpn_v2"
+    pcutoff: float = 0.4
+    cat_body_length_m: float = 0.45
+    floor_y_px: float | None = None
 
 
-def _load_predictor(checkpoint: str):
-    """Lazy import + load. Importing openpifpaf is slow (several seconds)."""
-    import openpifpaf  # noqa: PLC0415
-
-    print(f"[pose] loading OpenPifPaf checkpoint: {checkpoint}")
-    return openpifpaf.Predictor(checkpoint=checkpoint)
-
-
-def get_video_meta(video_path: Path) -> tuple[float, int, int, int]:
-    """Return (fps, image_height_px, image_width_px, n_frames) by peeking at the video."""
+def get_video_meta(video_path: Path) -> tuple[float, int]:
+    """Return (fps, image_height_px) by peeking at the video with OpenCV."""
     import cv2  # noqa: PLC0415
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"cv2 couldn't open {video_path}")
     fps = float(cap.get(cv2.CAP_PROP_FPS))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
-    return fps, h, w, n
+    return fps, height
 
 
-def _pick_best_cat(predictions, frame_idx: int) -> object | None:
-    """If multiple animals detected in one frame, keep the highest-score one.
+def run_superanimal(cfg: ExtractConfig):
+    """Invoke DLC's video_inference_superanimal. Imports deeplabcut lazily so
+    this module is importable on machines without DLC installed.
 
-    OpenPifPaf returns predictions sorted by score descending, so we can just
-    take the first; but be defensive in case that contract changes.
+    Returns the DLC output dataframe (multi-indexed by bodypart x coord) plus
+    the path to the produced .h5.
     """
-    if not predictions:
-        return None
-    return max(predictions, key=lambda a: getattr(a, "score", 0.0))
-
-
-def run_openpifpaf(cfg: ExtractConfig) -> tuple[np.ndarray, float, int, int]:
-    """Iterate over frames, run OpenPifPaf, return (T, 20, 3) keypoints.
-
-    Returns:
-        keypoints_20: (T, 20, 3) array of (x, y, confidence) in image pixels;
-                      NaN where no animal was detected
-        fps: video fps
-        height_px: image height
-        width_px: image width
-    """
-    import cv2  # noqa: PLC0415
+    import deeplabcut  # noqa: PLC0415
 
     cfg.video_path = Path(cfg.video_path).resolve()
     if not cfg.video_path.exists():
         raise FileNotFoundError(cfg.video_path)
 
-    fps, h, w, n_frames = get_video_meta(cfg.video_path)
-    predictor = _load_predictor(cfg.checkpoint)
+    print(f"[pose] running DLC SuperAnimal on {cfg.video_path}")
+    deeplabcut.video_inference_superanimal(
+        videos=[str(cfg.video_path)],
+        superanimal_name=cfg.superanimal,
+        model_name=cfg.model_name,
+        detector_name=cfg.detector_name,
+        video_adapt=False,
+        pcutoff=cfg.pcutoff,
+    )
 
-    cap = cv2.VideoCapture(str(cfg.video_path))
-    out: list[np.ndarray] = []
-    frame_idx = 0
-    sampled = 0
+    candidates = list(cfg.video_path.parent.glob(f"{cfg.video_path.stem}*.h5"))
+    if not candidates:
+        raise RuntimeError(f"DLC produced no .h5 next to {cfg.video_path}")
+    h5_path = max(candidates, key=lambda p: p.stat().st_mtime)
+    print(f"[pose] loading DLC output {h5_path}")
 
-    print(f"[pose] processing {n_frames} frames "
-          f"(sample_every_nth={cfg.sample_every_nth})")
+    import pandas as pd  # noqa: PLC0415
 
-    try:
-        while True:
-            ret, bgr = cap.read()
-            if not ret:
-                break
-            if frame_idx % cfg.sample_every_nth == 0:
-                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                predictions, _gt, _meta = predictor.numpy_image(rgb)
-                ann = _pick_best_cat(predictions, frame_idx)
-                if ann is None:
-                    out.append(np.full((20, 3), np.nan, dtype=np.float64))
-                else:
-                    data = np.asarray(ann.data, dtype=np.float64)
-                    if data.shape != (20, 3):
-                        # Defensive: pad/crop to 20.
-                        kps = np.full((20, 3), np.nan)
-                        n_kp = min(data.shape[0], 20)
-                        kps[:n_kp] = data[:n_kp]
-                        data = kps
-                    out.append(data)
-                sampled += 1
-                if sampled % 30 == 0:
-                    print(f"[pose] {sampled} frames processed")
-            frame_idx += 1
-    finally:
-        cap.release()
-
-    print(f"[pose] done: {sampled} frames")
-    arr = np.stack(out, axis=0) if out else np.zeros((0, 20, 3))
-    # Effective fps is reduced by the sampling stride.
-    eff_fps = fps / cfg.sample_every_nth
-    return arr, eff_fps, h, w
+    df = pd.read_hdf(h5_path)
+    return df, h5_path
 
 
-def openpifpaf_to_project_keypoints(
-    kps_20: np.ndarray,
-    pcutoff: float,
-) -> np.ndarray:
-    """Convert OpenPifPaf's (T, 20, 3) output to our (T, 12, 2) array.
+def _resolve_dlc_name(bodyparts: list[str], candidates: list[str]) -> str | None:
+    """First candidate present. None if none match."""
+    available = set(bodyparts)
+    for c in candidates:
+        if c in available:
+            return c
+    return None
 
-    Confidence < pcutoff -> NaN.
+
+def dlc_to_project_keypoints(df, pcutoff: float) -> tuple[np.ndarray, list[str]]:
+    """Convert a DLC SuperAnimal dataframe to our (T, 12, 2) keypoint array.
+
+    Low-confidence detections are replaced by NaN.
     """
-    T = kps_20.shape[0]
-    out = np.full((T, len(PROJECT_KP_NAMES), 2), np.nan, dtype=np.float64)
-    for our_idx, name in enumerate(PROJECT_KP_NAMES):
-        src_idx = OPENPIFPAF_INDEX_MAP[name]
-        xs = kps_20[:, src_idx, 0]
-        ys = kps_20[:, src_idx, 1]
-        conf = kps_20[:, src_idx, 2]
-        mask = (conf >= pcutoff) & np.isfinite(xs) & np.isfinite(ys)
-        out[mask, our_idx, 0] = xs[mask]
-        out[mask, our_idx, 1] = ys[mask]
-    return out
+    df = df.copy()
+    df.columns = df.columns.droplevel(0)
+    bodyparts = sorted({c[0] for c in df.columns})
+
+    resolved: list[tuple[str, str]] = []
+    for our_name in PROJECT_KP_NAMES:
+        dlc_name = _resolve_dlc_name(bodyparts, SUPERANIMAL_KP_MAP[our_name])
+        if dlc_name is None:
+            raise KeyError(
+                f"None of {SUPERANIMAL_KP_MAP[our_name]!r} present in DLC output. "
+                f"Available: {bodyparts}"
+            )
+        resolved.append((our_name, dlc_name))
+
+    n_frames = len(df)
+    out = np.full((n_frames, len(PROJECT_KP_NAMES), 2), np.nan, dtype=np.float64)
+    for i, (_our, dlc_name) in enumerate(resolved):
+        x = df[(dlc_name, "x")].to_numpy(dtype=np.float64)
+        y = df[(dlc_name, "y")].to_numpy(dtype=np.float64)
+        likelihood = df[(dlc_name, "likelihood")].to_numpy(dtype=np.float64)
+        mask = likelihood >= pcutoff
+        out[mask, i, 0] = x[mask]
+        out[mask, i, 1] = y[mask]
+    return out, [r[1] for r in resolved]
 
 
 def fill_missing_linear(kps: np.ndarray) -> np.ndarray:
-    """Linearly interpolate NaN frames per keypoint per coord.
-
-    Edge NaNs are filled by nearest-neighbour. If a keypoint is NaN in every
-    frame, it's left as NaN.
-    """
+    """Linearly interpolate NaN frames per keypoint per coord."""
     out = kps.copy()
     T, N, _ = out.shape
     for i in range(N):
@@ -213,13 +181,13 @@ def fill_missing_linear(kps: np.ndarray) -> np.ndarray:
 
 
 def infer_floor_y_px(kps: np.ndarray) -> float:
-    """Floor y in image space = max paw y observed (largest image-y == lowest in image)."""
+    """Floor y in image space = max paw y observed."""
     paw_y = kps[:, 4:8, 1]
     return float(np.nanmax(paw_y))
 
 
 def infer_scale_m_per_px(kps: np.ndarray, body_length_m: float) -> float:
-    """Estimate world scale from the median withers->hips pixel distance."""
+    """Estimate world scale from median withers->hips pixel distance."""
     withers = kps[:, 1, :]
     hips = kps[:, 2, :]
     d_px = np.linalg.norm(withers - hips, axis=1)
@@ -261,19 +229,16 @@ def write_project_json(
 
 
 def extract(cfg: ExtractConfig) -> Path:
-    """End-to-end: video -> OpenPifPaf -> our JSON keypoints schema."""
-    raw, fps, h, _w = run_openpifpaf(cfg)
-    if raw.shape[0] == 0:
-        raise RuntimeError(f"No frames decoded from {cfg.video_path}")
+    """End-to-end: video -> DLC SuperAnimal -> our JSON keypoints schema."""
+    fps, height = get_video_meta(cfg.video_path)
+    df, _ = run_superanimal(cfg)
+    raw_kps, resolved = dlc_to_project_keypoints(df, cfg.pcutoff)
 
-    kps_partial = openpifpaf_to_project_keypoints(raw, cfg.pcutoff)
-    nan_frac_per_kp = np.isnan(kps_partial[..., 0]).mean(axis=0)
-    print("[pose] NaN fraction per keypoint (before fill):")
-    for name, frac in zip(PROJECT_KP_NAMES, nan_frac_per_kp, strict=True):
-        flag = "  WARN" if frac > 0.5 else ""
-        print(f"        {name:>10}: {frac:.2%}{flag}")
+    print("[pose] resolved keypoint mapping:")
+    for our_name, dlc_name in zip(PROJECT_KP_NAMES, resolved, strict=True):
+        print(f"        {our_name:>10} <- {dlc_name}")
 
-    kps = fill_missing_linear(kps_partial)
+    kps = fill_missing_linear(raw_kps)
     if np.isnan(kps).any():
         raise RuntimeError(
             "Some keypoints are NaN even after interpolation. "
@@ -287,7 +252,7 @@ def extract(cfg: ExtractConfig) -> Path:
         else infer_floor_y_px(kps)
     )
 
-    print(f"[pose] effective fps={fps:.2f}  image_height={h}px")
+    print(f"[pose] fps={fps:.2f}  image_height={height}px")
     print(f"[pose] inferred scale = {scale:.4f} m/px "
           f"(assuming cat body length {cfg.cat_body_length_m} m)")
     print(f"[pose] inferred floor_y = {floor_y:.1f} px")
@@ -296,8 +261,8 @@ def extract(cfg: ExtractConfig) -> Path:
         out_path=cfg.out_json,
         kps=kps,
         fps=fps,
-        image_height_px=h,
+        image_height_px=height,
         scale_m_per_px=scale,
         floor_y_px=floor_y,
-        source=f"openpifpaf/{cfg.checkpoint}",
+        source=f"deeplabcut/{cfg.superanimal}/{cfg.model_name}",
     )
