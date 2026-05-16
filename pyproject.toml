@@ -25,6 +25,7 @@ motion = [
     "torch>=2.3",
     "jax[cuda12]>=0.4.30; sys_platform == 'linux'",
     "jax>=0.4.30; sys_platform != 'linux'",
+    "ml_dtypes>=0.4.0",
     "brax>=0.10",
     "mujoco-mjx>=3.2",
     "playground @ git+https://github.com/google-deepmind/mujoco_playground.git",
