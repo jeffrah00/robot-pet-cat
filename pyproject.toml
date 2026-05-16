@@ -48,6 +48,7 @@ retargeting = [
 # pins tables==3.8.0 and conflicts otherwise).
 pose = [
     "deeplabcut>=2.3.11",
+    "tensorflow>=2.13,<2.16",
     "opencv-python>=4.10",
 ]
 
