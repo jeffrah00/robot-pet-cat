@@ -2,23 +2,29 @@
 # Run this on a fresh RunPod / Lambda Labs Ubuntu 22.04+ box.
 # Assumes you've SSH'd in and cloned the repo.
 #
-# mujoco_playground requires Python >= 3.11. We auto-detect: if python3.11 or
-# python3.12 is already on the box (common in recent RunPod PyTorch templates),
-# we use that. Otherwise we add deadsnakes and install 3.11.
+# Why python3.11 specifically:
+#   - mujoco_playground requires Python >= 3.11.
+#   - deeplabcut 2.3.x (the SuperAnimal entry point) is only tested against
+#     Python 3.10/3.11. On 3.12, its pinned tables==3.8.0 tries to compile
+#     blosc2 from source and fails. So we cap at 3.11 until DLC 3.x ships.
 
 set -euo pipefail
 
-# Find a usable Python (3.11 or 3.12). Empty if none found.
+# Find a usable Python: prefer 3.11. Empty if none found.
 detect_py() {
-  for p in python3.12 python3.11; do
+  for p in python3.11 python3.12; do
     if command -v "$p" >/dev/null 2>&1; then echo "$p"; return; fi
   done
 }
 
 PY="$(detect_py)"
 
-if [[ -z "$PY" ]]; then
-  echo ">>> no python3.11+ found, installing 3.11 from deadsnakes"
+if [[ -z "$PY" || "$PY" != "python3.11" ]]; then
+  if [[ "$PY" == "python3.12" ]]; then
+    echo ">>> only python3.12 found; DLC 2.3.x doesn't build on 3.12, installing 3.11"
+  else
+    echo ">>> no python3.11 found, installing it from deadsnakes"
+  fi
   sudo apt-get update
   sudo apt-get install -y --no-install-recommends software-properties-common
   sudo add-apt-repository -y ppa:deadsnakes/ppa
@@ -63,3 +69,4 @@ echo ">>> smoke test"
 python -m robot_pet_cat.cli sim --steps 100
 
 echo "Done. Next: bash scripts/train_motion.sh"
+echo "       (or: pip install -e \".[pose]\"  for the pose extractor)"
