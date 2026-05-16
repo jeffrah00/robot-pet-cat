@@ -41,9 +41,20 @@ def main(argv: list[str] | None = None) -> int:
     tbrain.add_argument("--config", required=True)
 
     retarget = sub.add_parser(
-        "retarget", help="Extract pose + retarget cat clips to Go2 reference trajectories."
+        "retarget",
+        help=(
+            "Retarget cat keypoint clips to Go2 reference trajectories. "
+            "Reads .json keypoint files from --clips and writes .npz files to --out."
+        ),
     )
-    retarget.add_argument("--clips", required=True, help="Directory of raw .mp4 clips.")
+    retarget.add_argument(
+        "--clips", required=True,
+        help="Directory of keypoint .json files (see docs/retargeting.md for schema).",
+    )
+    retarget.add_argument(
+        "--out", default="data/motion_clips",
+        help="Output directory for .npz files (default: data/motion_clips).",
+    )
 
     sub.add_parser("demo", help="Run the cat in the household scene for N seconds.")
 
@@ -51,7 +62,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "sim":
         from robot_pet_cat.sim.mujoco_env import smoke_test
-
         return smoke_test(render=args.render, steps=args.steps)
     if args.cmd == "train-motion":
         print(f"[stub] would AMP-train motion with {args.config}")
@@ -63,7 +73,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[stub] would train brain with {args.config}")
         return 0
     if args.cmd == "retarget":
-        print(f"[stub] would retarget clips in {args.clips}")
+        from pathlib import Path
+        from robot_pet_cat.retargeting import process_directory
+
+        written = process_directory(Path(args.clips), Path(args.out))
+        if not written:
+            print(f"No .json keypoint files found in {args.clips}")
+            return 1
+        for p in written:
+            print(f"wrote {p}")
         return 0
     if args.cmd == "demo":
         print("[stub] would spawn cat in living room and run for 60 seconds")
