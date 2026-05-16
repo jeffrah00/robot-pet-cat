@@ -71,8 +71,8 @@ export PIP_CONSTRAINT="$CONSTRAINT_PATH"
 echo ">>> upgrade pip / pin setuptools<70"
 pip install --upgrade pip wheel "setuptools<70"
 
-echo ">>> project (motion + brain + pose + retargeting + dev) -- all extras"
-pip install -e ".[motion,brain,pose,retargeting,dev]"
+echo ">>> project (motion + brain + retargeting + dev) -- pose lives in .venv-pose"
+pip install -e ".[motion,brain,retargeting,dev]"
 
 # --- 5. External service logins ---------------------------------------------
 echo ">>> HF + W&B login (if .env has the keys)"
