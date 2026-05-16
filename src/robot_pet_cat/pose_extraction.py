@@ -145,10 +145,27 @@ def _resolve_dlc_name(bodyparts: list[str], candidates: list[str]) -> str | None
 def dlc_to_project_keypoints(df, pcutoff: float) -> tuple[np.ndarray, list[str]]:
     """Convert a DLC SuperAnimal dataframe to our (T, 12, 2) keypoint array.
 
+    DLC 3.x output has 4 column levels: (scorer, individual, bodypart, coord)
+    because it supports multi-animal tracking. DLC 2.x had 3: (scorer,
+    bodypart, coord). We handle both: drop scorer, then if individuals remain,
+    pick the one with the most detected keypoints (the actual cat).
+
     Low-confidence detections are replaced by NaN.
     """
     df = df.copy()
+    # Drop scorer (always the outermost level).
     df.columns = df.columns.droplevel(0)
+    # DLC 3.x leaves individual level next. Detect by checking column structure.
+    if df.columns.nlevels == 3:
+        individuals = list(df.columns.get_level_values(0).unique())
+        # Pick the individual with the most non-NaN values across all bodyparts.
+        def _liveness(ind: str) -> int:
+            sub = df.xs(ind, level=0, axis=1)
+            return int(sub.notna().sum().sum())
+        best = max(individuals, key=_liveness)
+        print(f"[pose] DLC 3.x multi-animal output: using '{best}' "
+              f"(most detections among {individuals})")
+        df = df.xs(best, level=0, axis=1)
     bodyparts = sorted({c[0] for c in df.columns})
 
     resolved: list[tuple[str, str]] = []
