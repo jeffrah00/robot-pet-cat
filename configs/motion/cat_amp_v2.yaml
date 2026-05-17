@@ -1,0 +1,48 @@
+# True AMP-PPO config for Go2 cat-style locomotion.
+# Consumed by `rpc train-motion-v2 --config configs/motion/cat_amp_v2.yaml`.
+# Maps onto src/robot_pet_cat/motion/amp_trainer_v2.py:AMPTrainConfigV2.
+
+# --- AMP scalars -----------------------------------------------------------
+motion_clips_dir: data/motion_clips
+style_reward_weight: 2.0       # lambda on r_style in the augmented reward
+task_reward_weight: 1.0
+use_qvel_in_features: false
+
+# --- Discriminator hyperparams --------------------------------------------
+disc_hidden_sizes: [1024, 512]
+disc_grad_penalty_coef: 10.0
+disc_learning_rate: 0.0001
+disc_batch_size: 4096
+disc_updates_per_iter: 1
+disc_pretrain_steps: 200
+
+# --- Env -------------------------------------------------------------------
+env_name: Go2JoystickFlatTerrain
+num_envs: 4096
+episode_length_s: 20.0
+
+# --- PPO -------------------------------------------------------------------
+ppo:
+  total_iterations: 5000       # ~5k * 4096 envs * 20 unroll = ~410M env steps
+  unroll_length: 20
+  num_minibatches: 32
+  num_updates_per_batch: 4
+  discounting: 0.97
+  gae_lambda: 0.95
+  clipping_epsilon: 0.2
+  entropy_cost: 0.01
+  learning_rate: 0.0003
+  max_grad_norm: 1.0
+  policy_hidden_sizes: [512, 256, 128]
+  value_hidden_sizes:  [512, 256, 128]
+
+# --- Run-level -------------------------------------------------------------
+seed: 0
+log_interval_iters: 10
+eval_interval_iters: 100
+checkpoint_interval_iters: 500
+checkpoint_dir: checkpoints/motion_v2
+
+# Optional: warm-start from the v1 PPO ckpt so we skip the cold-start
+# exploration phase. Comment out for a from-scratch run.
+init_policy_ckpt: checkpoints/motion/ppo_params.pkl

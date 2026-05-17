@@ -49,9 +49,6 @@ retargeting = [
 ]
 
 # Real pose extraction via DLC SuperAnimal-Quadruped.
-# Works on Python 3.11 with setuptools<70 pinned (see setup_cloud.sh).
-# Tables/pandas come along transitively; do not pin them here (DLC 2.3.x
-# pins tables==3.8.0 and conflicts otherwise).
 pose = [
     "deeplabcut>=2.3.11",
     "tensorflow>=2.13,<2.16",
@@ -68,4 +65,18 @@ dev = [
 ]
 
 [project.scripts]
-rpc = "ro
+rpc = "robot_pet_cat.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
