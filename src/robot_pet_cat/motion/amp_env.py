@@ -29,6 +29,30 @@ class AMPEnvConfig:
     seed: int = 0
 
 
+def _resolve_joystick_default_config():
+    """Get the Joystick default config without instantiating an env.
+
+    Playground exposes default_config as a module-level function in the
+    joystick module, not as an instance/class method on Joystick. The
+    previous `env.default_config()` call worked in older playground
+    versions but raises AttributeError on current installs.
+    """
+    import importlib  # noqa: PLC0415
+
+    for mod_name in (
+        "mujoco_playground._src.locomotion.go1.joystick",
+        "mujoco_playground.locomotion.go1.joystick",
+        "mujoco_playground._src.locomotion.unitree_go1.joystick",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        if hasattr(mod, "default_config") and callable(mod.default_config):
+            return mod.default_config()
+    return None
+
+
 def make_env(cfg: AMPEnvConfig):
     """Construct the underlying mujoco_playground env.
 
@@ -39,15 +63,36 @@ def make_env(cfg: AMPEnvConfig):
 
     We unconditionally import robot_pet_cat.motion.go2_env first so the Go2
     Joystick env gets registered before any registry lookup. mujoco_playground
-    only ships Go1 envs out of the box; importing go2_env adds Go2 variants.
+    only ships Go1 envs out of the box.
     """
     from robot_pet_cat.motion import go2_env  # noqa: F401, PLC0415  # side-effect: registers Go2
 
     from mujoco_playground import registry  # noqa: PLC0415
 
     available = sorted(registry.ALL_ENVS) if hasattr(registry, "ALL_ENVS") else []
+
+    # Resolve default config externally rather than via env.default_config(),
+    # which raises AttributeError on current playground versions.
+    env_cfg = _resolve_joystick_default_config()
+    if env_cfg is not None:
+        if hasattr(env_cfg, "episode_length"):
+            env_cfg.episode_length = cfg.episode_length_s
+        if hasattr(env_cfg, "action_repeat"):
+            env_cfg.action_repeat = cfg.action_repeat
+        # Force JAX backend here too -- our go2 wrapper does it on the inner
+        # Joystick instantiation, but if registry.load(name, config) honors
+        # this config without going through our wrapper's path we want jax.
+        if hasattr(env_cfg, "impl"):
+            try:
+                env_cfg.impl = "jax"
+            except (AttributeError, TypeError):
+                pass
+
     try:
-        env = registry.load(cfg.base_env_name)
+        if env_cfg is None:
+            env = registry.load(cfg.base_env_name)
+        else:
+            env = registry.load(cfg.base_env_name, env_cfg)
     except (ValueError, KeyError) as e:
         go2 = [n for n in available if "go2" in n.lower()]
         msg_lines = [
@@ -59,12 +104,6 @@ def make_env(cfg: AMPEnvConfig):
             f"Underlying error: {e}",
         ]
         raise RuntimeError("\n".join(msg_lines)) from e
-    env_cfg = env.default_config()
-    if hasattr(env_cfg, "episode_length"):
-        env_cfg.episode_length = cfg.episode_length_s
-    if hasattr(env_cfg, "action_repeat"):
-        env_cfg.action_repeat = cfg.action_repeat
-    env = registry.load(cfg.base_env_name, env_cfg)
     return env
 
 
@@ -77,15 +116,8 @@ def extract_amp_features(
 
     AMP's discriminator works on a feature representation of the state, not
     the full observation. We use the robot's joint positions (and optionally
-    velocities) -- not the policy observation -- because that's what AMP cares
+    velocities), not the policy observation, because that's what AMP cares
     about stylistically.
-
-    Args:
-        qpos: (..., qpos_dim) joint positions including root.
-        qvel: (..., qvel_dim) joint velocities, or None.
-        use_qvel: whether to concatenate qvel into the feature.
-    Returns:
-        features: (..., qpos_dim) or (..., qpos_dim + qvel_dim).
     """
     if use_qvel:
         if qvel is None:
@@ -101,11 +133,10 @@ def build_transitions_for_amp(
 ) -> jnp.ndarray:
     """Build (B, 2 * feat_dim) AMP transition features from a rollout.
 
-    Inputs are rollouts of shape (T, B, dim) where T is rollout length and B
-    is number of parallel envs. Output is a flat batch of (T-1) * B transitions
-    suitable for direct use in the discriminator.
+    Inputs are rollouts of shape (T, B, dim). Output is a flat batch of
+    (T-1) * B transitions ready for the discriminator.
     """
-    feats = extract_amp_features(qpos_traj, qvel_traj, use_qvel)  # (T, B, feat)
+    feats = extract_amp_features(qpos_traj, qvel_traj, use_qvel)
     s_t = feats[:-1]
     s_tp1 = feats[1:]
     pairs = jnp.concatenate([s_t, s_tp1], axis=-1)
@@ -114,6 +145,5 @@ def build_transitions_for_amp(
 
 
 def split_rng(rng: jax.Array, n: int) -> list[jax.Array]:
-    """Convenience wrapper around jax.random.split."""
     keys = jax.random.split(rng, n)
     return [keys[i] for i in range(n)]
