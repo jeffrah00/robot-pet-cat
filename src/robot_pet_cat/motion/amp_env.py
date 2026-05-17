@@ -33,14 +33,27 @@ def make_env(cfg: AMPEnvConfig):
     """Construct the underlying mujoco_playground env.
 
     Lazy import so this file is parseable on machines without the heavy
-    [motion] extras installed.
+    [motion] extras installed. If the named env doesn't exist (the registry's
+    naming convention has drifted between versions), the error message lists
+    every available env so the user can fix the config without grepping.
     """
     from mujoco_playground import registry  # noqa: PLC0415
 
-    env = registry.load(cfg.base_env_name)
+    available = sorted(registry.ALL_ENVS) if hasattr(registry, "ALL_ENVS") else []
+    try:
+        env = registry.load(cfg.base_env_name)
+    except (ValueError, KeyError) as e:
+        go2 = [n for n in available if "go2" in n.lower()]
+        msg_lines = [
+            f"Failed to load env {cfg.base_env_name!r}.",
+            "Likely a naming-convention mismatch with this mujoco_playground version.",
+            f"All envs ({len(available)}): {available}",
+            f"Go2 envs: {go2}",
+            f"Underlying error: {e}",
+        ]
+        raise RuntimeError("\n".join(msg_lines)) from e
     env_cfg = env.default_config()
     if hasattr(env_cfg, "episode_length"):
-        # mujoco_playground envs typically expose episode_length in seconds.
         env_cfg.episode_length = cfg.episode_length_s
     if hasattr(env_cfg, "action_repeat"):
         env_cfg.action_repeat = cfg.action_repeat
@@ -86,7 +99,6 @@ def build_transitions_for_amp(
     suitable for direct use in the discriminator.
     """
     feats = extract_amp_features(qpos_traj, qvel_traj, use_qvel)  # (T, B, feat)
-    # (T-1, B, 2 * feat) -> (-1, 2 * feat)
     s_t = feats[:-1]
     s_tp1 = feats[1:]
     pairs = jnp.concatenate([s_t, s_tp1], axis=-1)
