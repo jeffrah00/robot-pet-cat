@@ -38,17 +38,26 @@ else
 fi
 
 echo "=== current torch / CUDA in dlc env ==="
+# Diagnostic only; failures here (e.g. broken torch install) shouldn't abort
+# the script -- the install step below is what fixes them. set +e to ignore
+# the python exit code, then set -e back.
+set +e
 $RUNNER python - <<'PY'
-import torch
-print(f"torch.__version__     = {torch.__version__}")
-print(f"torch.cuda.is_available() = {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    print(f"torch.cuda.device_count() = {torch.cuda.device_count()}")
-    print(f"device 0 name         = {torch.cuda.get_device_name(0)}")
-    print(f"torch CUDA build      = {torch.version.cuda}")
-else:
-    print("torch is CPU-only -- this is the slowness.")
+try:
+    import torch
+    print(f"torch.__version__     = {torch.__version__}")
+    print(f"torch.cuda.is_available() = {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"torch.cuda.device_count() = {torch.cuda.device_count()}")
+        print(f"device 0 name         = {torch.cuda.get_device_name(0)}")
+        print(f"torch CUDA build      = {torch.version.cuda}")
+    else:
+        print("torch is CPU-only -- this is the slowness.")
+except ImportError as e:
+    print(f"torch import currently broken: {e}")
+    print("will reinstall below.")
 PY
+set -e
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
   exit 0
