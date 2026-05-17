@@ -64,7 +64,20 @@ def main(argv: list[str] | None = None) -> int:
         from robot_pet_cat.sim.mujoco_env import smoke_test
         return smoke_test(render=args.render, steps=args.steps)
     if args.cmd == "train-motion":
-        print(f"[stub] would AMP-train motion with {args.config}")
+        from pathlib import Path
+        import yaml
+        from robot_pet_cat.motion.amp_trainer import (
+            AMPTrainConfig, PPOConfig, train,
+        )
+        with open(args.config) as f:
+            raw = yaml.safe_load(f)
+        ppo_kwargs = raw.pop("ppo", {})
+        # Convert paths to Path objects
+        for k in ("motion_clips_dir", "checkpoint_dir"):
+            if k in raw:
+                raw[k] = Path(raw[k])
+        cfg = AMPTrainConfig(ppo=PPOConfig(**ppo_kwargs), **raw)
+        train(cfg)
         return 0
     if args.cmd == "train-skill":
         print(f"[stub] would train skill {args.skill} (config={args.config})")
@@ -74,20 +87,4 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "retarget":
         from pathlib import Path
-        from robot_pet_cat.retargeting import process_directory
-
-        written = process_directory(Path(args.clips), Path(args.out))
-        if not written:
-            print(f"No .json keypoint files found in {args.clips}")
-            return 1
-        for p in written:
-            print(f"wrote {p}")
-        return 0
-    if args.cmd == "demo":
-        print("[stub] would spawn cat in living room and run for 60 seconds")
-        return 0
-    return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+        from robot_pet_cat.retargeting import process_
