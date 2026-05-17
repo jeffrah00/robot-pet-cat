@@ -143,16 +143,23 @@ def train(cfg: AMPTrainConfigV2) -> None:
     value_params = ppo_nets.value_network.init(k_value)
 
     # brax's policy_network.apply signature is (normalizer_params, params, obs).
-    # We track running obs statistics so the policy sees normalized inputs --
-    # same as what brax PPO does internally.
+    # mujoco_playground envs return obs as a DICT (typically {"state": <array>}),
+    # so the normalizer spec has to be a dict-shaped pytree, not a flat Array.
+    # Without this brax does normalizer_params.mean[obs_key] on a flat array
+    # and crashes with "JAX does not support string indexing".
     from brax.training.acme import running_statistics, specs
-    dummy_obs = jax.tree_util.tree_map(
-        lambda x: jnp.zeros((x,) if isinstance(x, int) else x),
-        env.observation_size,
-    )
-    normalizer_params = running_statistics.init_state(
-        specs.Array(jnp.shape(dummy_obs), jnp.float32)
-    )
+
+    def _to_spec(size):
+        # size can be int (single-dim obs) or tuple (multi-dim obs).
+        shape = (size,) if isinstance(size, int) else tuple(size)
+        return specs.Array(shape, jnp.float32)
+
+    obs_size = env.observation_size
+    if isinstance(obs_size, dict):
+        obs_spec = {k: _to_spec(v) for k, v in obs_size.items()}
+    else:
+        obs_spec = _to_spec(obs_size)
+    normalizer_params = running_statistics.init_state(obs_spec)
 
     optimizer = optax.chain(
         optax.clip_by_global_norm(cfg.ppo.max_grad_norm),
@@ -360,10 +367,11 @@ def train(cfg: AMPTrainConfigV2) -> None:
             traj["reward"], traj["value"], traj["done"], last_v,
         )
 
-        # Flatten T,B -> T*B for minibatch SGD.
+        # Flatten T,B -> T*B for minibatch SGD. obs may be a dict (mujoco_playground
+        # gives {"state": array}); tree_map handles both dict and flat array cases.
         def flatten(x):
             return x.reshape((-1,) + x.shape[2:])
-        obs_flat = flatten(traj["obs"])
+        obs_flat = jax.tree_util.tree_map(flatten, traj["obs"])
         act_flat = flatten(traj["act"])
         raw_act_flat = flatten(traj["raw_act"])
         log_prob_flat = flatten(traj["log_prob"])
@@ -377,10 +385,11 @@ def train(cfg: AMPTrainConfigV2) -> None:
             perm = jax.random.permutation(k_perm, n)
             for mb in range(cfg.ppo.num_minibatches):
                 idx = perm[mb * mb_size:(mb + 1) * mb_size]
+                obs_mb = jax.tree_util.tree_map(lambda x: x[idx], obs_flat)
                 policy_params, value_params, opt_state, ppo_loss, ppo_aux = (
                     ppo_update(
                         normalizer_params, policy_params, value_params, opt_state,
-                        obs_flat[idx], act_flat[idx], log_prob_flat[idx],
+                        obs_mb, act_flat[idx], log_prob_flat[idx],
                         raw_act_flat[idx], advs_flat[idx], returns_flat[idx],
                     )
                 )
