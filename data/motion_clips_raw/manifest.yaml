@@ -1,0 +1,133 @@
+# Curated cat motion clips for AMP reference buffer.
+#
+# Each entry is a clip we want in the corpus. fetch_clips.py downloads from
+# `source` + `source_id_or_url`, optionally crops via ffmpeg using `crop`, and
+# writes data/motion_clips_raw/<id>.mp4. retarget_all.py then runs DLC pose
+# extraction + our retargeting and writes data/motion_clips/<id>.npz.
+#
+# Behavior tags follow docs/cat_motion_corpus.md (locomotion / resting /
+# transitions / grooming / stretching / play).
+#
+# Notes on initial picks: most Pexels cat clips are not strictly side-view, so
+# expect maybe 50-70% of these to retarget cleanly on the first pass. That is
+# fine for a first build of the corpus; bad-view clips drop out at retarget
+# time and we add replacements via web search later.
+
+clips:
+
+  # -- locomotion ---------------------------------------------------------
+  - id: walk_outdoor_gray
+    behavior: walk
+    source: pexels
+    source_id_or_url: "34482817"
+    notes: "ALREADY DOWNLOADED. Gray cat walking outdoors on cloudy day, ~20s."
+
+  - id: walk_around_01
+    behavior: walk
+    source: pexels
+    source_id_or_url: "6543588"
+    notes: "Cat walking around indoors. Verify side view at retarget time."
+
+  # -- resting / lounging ------------------------------------------------
+  - id: lying_grumpy_chair
+    behavior: lying
+    source: pexels
+    source_id_or_url: "4566126"
+    notes: "Grumpy cat lying on a chair, minimal motion, good for static pose anchoring."
+
+  - id: lying_carpet
+    behavior: lying
+    source: pexels
+    source_id_or_url: "4039192"
+    notes: "Gray cat lying lazily on carpet, side view, ribs visible."
+
+  - id: lying_bed
+    behavior: lying
+    source: pexels
+    source_id_or_url: "10492342"
+    notes: "Cat lying down on bed (vertical-shot phone video; may need crop)."
+
+  - id: lying_closeup
+    behavior: lying
+    source: pexels
+    source_id_or_url: "6365087"
+    notes: "Close up of cat lying down, tabby; may be too tight for full-body retarget."
+
+  # -- grooming ----------------------------------------------------------
+  - id: lick_paw_01
+    behavior: grooming
+    source: pexels
+    source_id_or_url: "855029"
+    notes: "Tabby in kitchen licking paw. The body shape Jeff explicitly asked for."
+
+  # -- stretching --------------------------------------------------------
+  - id: stretch_table
+    behavior: stretching
+    source: pexels
+    source_id_or_url: "18106001"
+    notes: "Cat stretching on a table. High-value pose for AMP - extreme joint extension."
+
+  # -- jumps (vertical) --------------------------------------------------
+  - id: jump_down_box
+    behavior: jump_down
+    source: pexels
+    source_id_or_url: "7691993"
+    notes: "Cat jumping out of a box. Down + forward motion."
+
+  - id: jump_up_box
+    behavior: jump_up
+    source: pexels
+    source_id_or_url: "5495527"
+    notes: "Cat jumping into a box (the inverse trajectory)."
+
+  - id: jump_down_piano
+    behavior: jump_down
+    source: pexels
+    source_id_or_url: "6853400"
+    notes: "Jump down from piano. Good height delta for vertical."
+
+  - id: jump_chair_pair
+    behavior: jump
+    source: pexels
+    source_id_or_url: "6853903"
+    notes: "Ginger cat jumping up AND down a chair (two trajectories in one clip)."
+
+  - id: jump_up_shelves
+    behavior: jump_up
+    source: pexels
+    source_id_or_url: "6853194"
+    notes: "Jumping onto bookshelf, multiple stages of leap."
+
+  - id: jump_up_shelves_alt
+    behavior: jump_up
+    source: pexels
+    source_id_or_url: "6853186"
+    notes: "Alt take of same scene, different angle."
+
+  # -- play / predatory --------------------------------------------------
+  - id: play_string_01
+    behavior: play
+    source: pexels
+    source_id_or_url: "6853962"
+    notes: "Cat playing with string toy on wooden floor. Includes swatting + crouching."
+
+  - id: play_hanging_carton
+    behavior: play
+    source: pexels
+    source_id_or_url: "5544179"
+    notes: "Cat reaching up to swat at a hanging carton. Standing on hindlegs briefly."
+
+  - id: play_kitten_mouse
+    behavior: play
+    source: pexels
+    source_id_or_url: "855282"
+    notes: "Kitten playing with toy mouse. Includes pouncing."
+
+# Behaviors NOT YET covered, add later when good-view clips found:
+#   - trot, gallop (fast locomotion at recognizable gait)
+#   - turn_in_place
+#   - sit_to_stand / stand_to_sit (transitions)
+#   - arch_back_yoga (Halloween-cat pose)
+#   - shake_off (full body shake)
+#   - crouch_stalk + wiggle_butt + pounce (three-phase predatory sequence)
+#   - scratch_head_with_hind_leg
