@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
 """Download the cat motion clips listed in data/motion_clips_raw/manifest.yaml.
 
-For each clip with `source: pexels` it hits the Pexels API and picks the
-highest-quality MP4 below ~5 MB compressed (full-quality is overkill for pose
-extraction). For `source: youtube` or `source: url` it uses yt-dlp.
+Two download paths for Pexels:
+  1. Pexels API (requires PEXELS_API_KEY): cleaner, picks 720p MP4 directly.
+  2. yt-dlp fallback: no API key needed, uses Pexels URL pattern.
+     Triggered when --no-api is passed OR when the API returns 401/403/404.
+
+For source: youtube or source: url, yt-dlp is always used.
 
 Optional time crop via ffmpeg if the manifest entry has a `crop` block.
 
 Usage:
-    # one-time: get a Pexels API key at https://www.pexels.com/api/
-    export PEXELS_API_KEY=xxxxx
-
+    # Option A: API key
+    export PEXELS_API_KEY=xxxxx          # get one at https://www.pexels.com/api/
     python scripts/fetch_clips.py
+
+    # Option B: yt-dlp only (no API key needed)
+    pip install yt-dlp
+    python scripts/fetch_clips.py --no-api
+
+    # Targeted
     python scripts/fetch_clips.py --only walk_outdoor_gray,stretch_table
-    python scripts/fetch_clips.py --skip-existing  # default; pass --force to redownload
+    python scripts/fetch_clips.py --force   # re-download even if .mp4 exists
 """
 
 from __future__ import annotations
@@ -29,10 +37,11 @@ import urllib.request
 from pathlib import Path
 
 PEXELS_API_BASE = "https://api.pexels.com/videos/videos"
+PEXELS_PAGE_URL = "https://www.pexels.com/video/{}/"
 
 
 def _load_manifest(manifest_path: Path) -> list[dict]:
-    import yaml  # noqa: PLC0415
+    import yaml
     with manifest_path.open() as f:
         data = yaml.safe_load(f)
     clips = data.get("clips", [])
@@ -41,28 +50,26 @@ def _load_manifest(manifest_path: Path) -> list[dict]:
     return clips
 
 
-def _pexels_video_url(video_id: str, api_key: str) -> str:
+def _pexels_video_url_via_api(video_id: str, api_key: str) -> str:
     """Hit the Pexels API for a video and return a sensible MP4 URL."""
     req = urllib.request.Request(
         f"{PEXELS_API_BASE}/{video_id}",
-        headers={"Authorization": api_key},
+        headers={"Authorization": api_key, "User-Agent": "robot-pet-cat/1.0"},
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             payload = json.load(resp)
     except urllib.error.HTTPError as e:
         raise RuntimeError(
-            f"Pexels API error for video {video_id}: HTTP {e.code} {e.reason}"
+            f"Pexels API HTTP {e.code} {e.reason} for video {video_id}"
         ) from e
 
     files = payload.get("video_files", [])
     if not files:
         raise RuntimeError(f"Pexels video {video_id} has no video_files in response")
 
-    # Prefer 720p (sweet spot for DLC; higher res is wasted compute).
     def score(f: dict) -> tuple[int, int]:
         h = f.get("height") or 0
-        # rank distance from 720
         return (abs(h - 720), -h)
 
     files = sorted(files, key=score)
@@ -71,14 +78,31 @@ def _pexels_video_url(video_id: str, api_key: str) -> str:
 
 def _download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[fetch_clips]   downloading {url} -> {dest.name}")
+    print(f"[fetch_clips]   downloading {url[:80]}{'...' if len(url) > 80 else ''} -> {dest.name}")
     req = urllib.request.Request(url, headers={"User-Agent": "robot-pet-cat/1.0"})
     with urllib.request.urlopen(req, timeout=120) as resp, dest.open("wb") as f:
         shutil.copyfileobj(resp, f)
 
 
+def _yt_dlp_download(url: str, dest: Path) -> None:
+    """Use yt-dlp to download from any supported site (incl. Pexels)."""
+    if shutil.which("yt-dlp") is None:
+        raise RuntimeError("yt-dlp not installed (pip install yt-dlp)")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[fetch_clips]   yt-dlp {url}")
+    # -f mp4 / best-mp4 -- prefer single-file mp4 over DASH segments.
+    cmd = [
+        "yt-dlp",
+        "-q", "--no-warnings",
+        "-f", "mp4/bv*+ba/b",
+        "--merge-output-format", "mp4",
+        "-o", str(dest),
+        url,
+    ]
+    subprocess.check_call(cmd)
+
+
 def _crop(src: Path, dest: Path, start_s: float, end_s: float) -> None:
-    """Re-encode the clip cropped to [start_s, end_s] via ffmpeg."""
     if shutil.which("ffmpeg") is None:
         print(f"[fetch_clips]   WARNING: ffmpeg not installed; skipping crop on {src.name}")
         if src != dest:
@@ -97,36 +121,41 @@ def _crop(src: Path, dest: Path, start_s: float, end_s: float) -> None:
     subprocess.check_call(cmd)
 
 
-def fetch_one(clip: dict, raw_dir: Path, force: bool) -> tuple[bool, str]:
+def fetch_one(clip: dict, raw_dir: Path, force: bool, prefer_api: bool) -> tuple[bool, str]:
     """Download a single manifest entry. Returns (ok, message)."""
     cid = clip["id"]
     source = clip["source"]
     out_path = raw_dir / f"{cid}.mp4"
 
     if out_path.exists() and not force:
-        return True, f"skip (exists)"
+        return True, "skip (exists)"
+
+    tmp_path = raw_dir / f"{cid}.raw.mp4"
 
     if source == "pexels":
-        api_key = os.environ.get("PEXELS_API_KEY")
-        if not api_key:
-            return False, "PEXELS_API_KEY env var not set (https://www.pexels.com/api/)"
-        try:
-            url = _pexels_video_url(str(clip["source_id_or_url"]), api_key)
-        except RuntimeError as e:
-            return False, str(e)
-        try:
-            tmp_path = raw_dir / f"{cid}.raw.mp4"
-            _download(url, tmp_path)
-        except Exception as e:  # noqa: BLE001
-            return False, f"download failed: {e}"
+        pid = str(clip["source_id_or_url"])
+        downloaded_via = None
+
+        if prefer_api and os.environ.get("PEXELS_API_KEY"):
+            try:
+                url = _pexels_video_url_via_api(pid, os.environ["PEXELS_API_KEY"])
+                _download(url, tmp_path)
+                downloaded_via = "api"
+            except (RuntimeError, urllib.error.URLError) as e:
+                print(f"[fetch_clips]   API failed ({e}); falling back to yt-dlp")
+
+        if downloaded_via is None:
+            page_url = PEXELS_PAGE_URL.format(pid)
+            try:
+                _yt_dlp_download(page_url, tmp_path)
+                downloaded_via = "yt-dlp"
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                return False, f"both API and yt-dlp failed: {e}"
+
     elif source in ("youtube", "url"):
-        if shutil.which("yt-dlp") is None:
-            return False, "yt-dlp not installed (pip install yt-dlp)"
-        tmp_path = raw_dir / f"{cid}.raw.mp4"
-        cmd = ["yt-dlp", "-f", "mp4", "-o", str(tmp_path), clip["source_id_or_url"]]
         try:
-            subprocess.check_call(cmd)
-        except subprocess.CalledProcessError as e:
+            _yt_dlp_download(clip["source_id_or_url"], tmp_path)
+        except (RuntimeError, subprocess.CalledProcessError) as e:
             return False, f"yt-dlp failed: {e}"
     else:
         return False, f"unknown source {source!r}"
@@ -158,6 +187,10 @@ def main() -> int:
         "--force", action="store_true",
         help="Redownload even if the .mp4 already exists.",
     )
+    parser.add_argument(
+        "--no-api", action="store_true",
+        help="Skip Pexels API even if PEXELS_API_KEY is set; use yt-dlp directly.",
+    )
     args = parser.parse_args()
 
     if not args.manifest.is_file():
@@ -179,7 +212,7 @@ def main() -> int:
     for clip in clips:
         cid = clip["id"]
         print(f"[fetch_clips] {cid} ({clip.get('behavior','?')}):")
-        ok, msg = fetch_one(clip, args.out, args.force)
+        ok, msg = fetch_one(clip, args.out, args.force, prefer_api=not args.no_api)
         print(f"[fetch_clips]   {'OK ' if ok else 'FAIL'}: {msg}")
         n_ok += int(ok)
         n_fail += int(not ok)
