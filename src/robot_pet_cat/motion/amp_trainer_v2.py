@@ -393,7 +393,8 @@ def train(cfg: AMPTrainConfigV2) -> None:
         advs_flat = flatten(advs)
         returns_flat = flatten(returns)
 
-        n = obs_flat.shape[0]
+        # obs_flat may be a dict (pytree) -- get N from any leaf.
+        n = jax.tree_util.tree_leaves(obs_flat)[0].shape[0]
         mb_size = n // cfg.ppo.num_minibatches
         for epoch in range(cfg.ppo.num_updates_per_batch):
             rng, k_perm = jax.random.split(rng)
