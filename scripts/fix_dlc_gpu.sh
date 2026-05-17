@@ -56,10 +56,18 @@ fi
 
 echo
 echo "=== installing GPU torch wheels ($CUDA_VER) ==="
-# --no-deps so we don't disturb DLC's other pins. Force-reinstall over the
-# CPU wheels.
+# Pin torch to 2.3.1 because:
+#   - torch 2.4+ ships cuDNN 9.x which has known NOT_INITIALIZED failures
+#     on RTX 40-series GPUs with HRNet-style ops (what SuperAnimal uses).
+#   - torch 2.3.1 bundles cuDNN 8.9 which is the combo DLC tests against
+#     and is solid on 40-series.
+# --no-deps so we don't disturb DLC's other pins (numpy, pandas, etc).
+# Also uninstall any standalone nvidia-cudnn-cu12 first -- if both
+# torch's bundled cuDNN and a standalone one are present, the loader
+# picks the wrong one and you get NOT_INITIALIZED.
+$RUNNER pip uninstall -y nvidia-cudnn-cu12 || true
 $RUNNER pip install --upgrade --force-reinstall --no-deps \
-  torch torchvision \
+  torch==2.3.1 torchvision==0.18.1 \
   --index-url "https://download.pytorch.org/whl/${CUDA_VER}"
 
 echo
