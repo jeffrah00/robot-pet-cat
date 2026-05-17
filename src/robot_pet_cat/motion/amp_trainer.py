@@ -1,27 +1,7 @@
 """AMP trainer for cat-style Go2 locomotion.
 
-Composes:
-  - mujoco_playground's Go1JoystickFlatTerrain as the env
-  - brax PPO networks + losses (policy and value MLPs)
-  - Our AMPDiscriminator for the style reward
-  - Our ReferenceBuffer for "real" cat transitions
-
-Training loop sketch (per iteration):
-  1. Roll out the policy in N parallel envs for T steps, collecting
-     (obs, action, log_prob, value, qpos, qvel, task_reward, done) per step.
-  2. Compute the AMP style reward on the rollout's (s, s') transitions via
-     the current discriminator: r_style[t, b] = style_reward(D(s_t, s_tp1)).
-  3. Compute the augmented reward: r[t, b] = task_w * r_task + style_w * r_style.
-  4. PPO update: GAE on augmented rewards, K epochs of clipped policy/value loss.
-  5. Discriminator update: sample real transitions from buffer, fake from rollout;
-     LS-GAN loss + R1 gradient penalty.
-  6. Log + checkpoint at intervals.
-
-This file ties everything together. Heavy deps are imported lazily so the
-module is parseable in environments without [motion] extras installed.
-
-Phase 2b. First training run is the test -- expect ~6-8 hours on a single
-RTX 4090 to see cat-style gait emerge from a flat-ground walk.
+Phase 2b first cut: discriminator pre-trains against noise then is frozen
+during PPO. Hooking the discriminator into brax's rollout buffer comes next.
 """
 
 from __future__ import annotations
@@ -50,28 +30,23 @@ class PPOConfig:
 
 @dataclass
 class AMPTrainConfig:
-    # AMP scalars
     motion_clips_dir: Path = Path("data/motion_clips")
-    style_reward_weight: float = 2.0    # lambda on r_style
+    style_reward_weight: float = 2.0
     task_reward_weight: float = 1.0
     use_qvel_in_features: bool = False
 
-    # Discriminator
     disc_hidden_sizes: Sequence[int] = (1024, 512)
     disc_grad_penalty_coef: float = 10.0
     disc_learning_rate: float = 1.0e-4
     disc_batch_size: int = 4096
     disc_updates_per_iter: int = 1
 
-    # Env
     env_name: str = "Go2JoystickFlatTerrain"
     num_envs: int = 4096
     episode_length_s: float = 20.0
 
-    # PPO
     ppo: PPOConfig = field(default_factory=PPOConfig)
 
-    # Run-level
     seed: int = 0
     wandb_project: str = "robot-pet-cat"
     wandb_run_name: str = "cat-amp-v1"
@@ -83,8 +58,6 @@ class AMPTrainConfig:
 
 
 def train(cfg: AMPTrainConfig) -> None:
-    """Top-level training entry. Heavy deps are lazy-imported so importing
-    this module is cheap on machines without the [motion] extras."""
     import jax
     import jax.numpy as jnp
     import optax
@@ -145,7 +118,7 @@ def train(cfg: AMPTrainConfig) -> None:
         new_params = optax.apply_updates(params, updates)
         return new_params, opt_state, loss, aux
 
-    # --- 5. Discriminator pre-training (200 steps against noise fakes) ---
+    # --- 5. Discriminator pre-training ---
     rng = jax.random.PRNGKey(cfg.seed)
     print("[amp] pre-training discriminator (200 steps, fakes = N(0,0.3))")
     for i in range(200):
@@ -166,10 +139,10 @@ def train(cfg: AMPTrainConfig) -> None:
     from brax.training.agents.ppo import train as brax_ppo
 
     # mujoco_playground envs return State objects with a different attribute
-    # shape than brax's wrappers expect (brax wants state.pipeline_state;
-    # playground stores its mjx data differently). Playground ships a wrapper
-    # that translates between the two; without it brax's AutoResetWrapper
-    # crashes with "AttributeError: 'State' object has no attribute 'pipeline_state'".
+    # shape than brax's wrappers expect. wrap_for_brax_training translates,
+    # AND vmaps internally. brax's default wrap_env path ALSO vmaps -- so
+    # without wrap_env=False we double-vmap and the PRNG key collapses
+    # to ndim=0 inside the inner vmap.
     from mujoco_playground import wrapper as mjx_wrapper
 
     env = mjx_wrapper.wrap_for_brax_training(
@@ -198,17 +171,12 @@ def train(cfg: AMPTrainConfig) -> None:
             f"wall={wall/60:6.1f}m"
         )
         metrics_log.append({"step": num_steps, "wall_s": wall, **metrics})
-        # TODO: wandb.log(metrics, step=num_steps)
-        # TODO: real discriminator update against policy rollouts. For now
-        # the discriminator is frozen after pre-training. Hooking into brax's
-        # rollout buffer requires custom code path; Phase 2b first cut keeps
-        # it simple.
 
-    make_inference_fn, params, brax_metrics = brax_ppo.train(
+    train_kwargs = dict(
         environment=env,
         num_timesteps=cfg.ppo.total_timesteps,
         num_evals=10,
-        episode_length=int(cfg.episode_length_s * 50),  # 50 Hz default
+        episode_length=int(cfg.episode_length_s * 50),
         unroll_length=cfg.ppo.unroll_length,
         num_minibatches=cfg.ppo.num_minibatches,
         num_updates_per_batch=cfg.ppo.num_updates_per_batch,
@@ -222,7 +190,18 @@ def train(cfg: AMPTrainConfig) -> None:
             obs, act, **{**kw, **network_kwargs}
         ),
         progress_fn=progress_fn,
+        wrap_env=False,
     )
+
+    try:
+        make_inference_fn, params, brax_metrics = brax_ppo.train(**train_kwargs)
+    except TypeError as e:
+        if "wrap_env" in str(e):
+            print("[amp] brax does not accept wrap_env=False; retrying without it")
+            train_kwargs.pop("wrap_env")
+            make_inference_fn, params, brax_metrics = brax_ppo.train(**train_kwargs)
+        else:
+            raise
 
     # --- 7. Checkpoint + (optional) HF push ---
     cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -235,3 +214,24 @@ def train(cfg: AMPTrainConfig) -> None:
             _push_to_hf(ckpt_path, cfg.hf_repo)
         except Exception as e:  # noqa: BLE001
             print(f"[amp] WARNING: HF push failed: {e}")
+
+    print(f"[amp] done in {(time.time() - start) / 60:.1f} min")
+
+
+def _save_pickle(obj, path: Path) -> None:
+    import pickle
+    with open(path, "wb") as f:
+        pickle.dump(obj, f)
+
+
+def _push_to_hf(local_path: Path, repo: str) -> None:
+    from huggingface_hub import HfApi
+    api = HfApi()
+    api.create_repo(repo, exist_ok=True, repo_type="model")
+    api.upload_file(
+        path_or_fileobj=str(local_path),
+        path_in_repo=local_path.name,
+        repo_id=repo,
+        repo_type="model",
+    )
+    print(f"[amp] pushed {local_path.name} to https://huggingface.co/{repo}")
