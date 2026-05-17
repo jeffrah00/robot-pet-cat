@@ -225,6 +225,21 @@ def train(cfg: AMPTrainConfigV2) -> None:
         v = ppo_nets.value_network.apply(norm_params, value_params, obs)
         return jnp.squeeze(v, axis=-1) if v.ndim > 1 else v
 
+    def _get_qpos(env_state):
+        """Extract qpos out of an env state. brax convention is
+        state.pipeline_state.qpos; mujoco_playground (wrap_for_brax_training)
+        gives state.data.qpos. Try both at trace time so the JITed scan picks
+        whichever attribute path actually exists on this env's State."""
+        s = getattr(env_state, "pipeline_state", None)
+        if s is None:
+            s = getattr(env_state, "data", None)
+        if s is None:
+            raise AttributeError(
+                "env_state has neither .pipeline_state nor .data; "
+                f"available attrs: {dir(env_state)}"
+            )
+        return s.qpos
+
     @functools.partial(jax.jit, static_argnames=("unroll_length",))
     def rollout(env_state, norm_params, policy_params, value_params, d_params, rng,
                 unroll_length: int):
@@ -238,9 +253,9 @@ def train(cfg: AMPTrainConfigV2) -> None:
                 norm_params, policy_params, env_state.obs, k_act,
             )
             v = value_predict(norm_params, value_params, env_state.obs)
-            qpos_before = env_state.pipeline_state.qpos
+            qpos_before = _get_qpos(env_state)
             next_env_state = env.step(env_state, act)
-            qpos_after = next_env_state.pipeline_state.qpos
+            qpos_after = _get_qpos(next_env_state)
 
             # Style reward on the (qpos_before, qpos_after) transition.
             transition_feat = jnp.concatenate(
