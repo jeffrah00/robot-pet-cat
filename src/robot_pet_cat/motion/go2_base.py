@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -79,10 +80,9 @@ def _fetch_menagerie_go2() -> Path:
 
 
 def get_assets() -> dict[str, bytes]:
-    """Return the asset dict mujoco needs to compile our Go2 scene from a string.
+    """Return the asset dict for our Go2 scene compile.
 
-    IMPORTANT: mujoco's MjModel.from_xml_string rejects duplicate basenames
-    in the assets dict. Use basename-only keys.
+    mujoco's from_xml_string rejects duplicate basenames; use basename-only keys.
     """
     assets: dict[str, bytes] = {}
 
@@ -99,11 +99,9 @@ def get_assets() -> dict[str, bytes]:
 
 
 def _go1_mesh_injection(menagerie_root: Path) -> dict[str, bytes]:
-    """Read Go1 meshes and key them by basename for mujoco's assets dict.
+    """Inject Go1 meshes (basename-only) so mujoco can find them.
 
-    mujoco_playground's Go1 get_assets() returns XMLs + PNG textures but NOT
-    the mesh files. We inject {basename: bytes} for every Go1 STL/OBJ.
-    Basename-only -- mujoco rejects duplicates.
+    Go1's get_assets() returns XMLs + PNGs but not meshes; we add them.
     """
     extras: dict[str, bytes] = {}
     go1_assets = menagerie_root / "unitree_go1" / "assets"
@@ -117,13 +115,7 @@ def _go1_mesh_injection(menagerie_root: Path) -> dict[str, bytes]:
 
 
 def _force_jax_backend(env_config: Any) -> Any:
-    """Override env_config.impl to 'jax' to avoid a mujoco/warp ABI mismatch.
-
-    Recent mujoco.mjx defaults Go1's config to impl='warp', and the warp
-    version typically installed alongside it doesn't have
-    `warp.types.warp_type_to_np_dtype`. The JAX backend is the standard
-    CPU/GPU path with no warp dependency, so we just force it.
-    """
+    """Override env_config.impl to 'jax' to avoid mujoco/warp ABI mismatch."""
     if env_config is None:
         return env_config
     if hasattr(env_config, "impl"):
@@ -135,8 +127,7 @@ def _force_jax_backend(env_config: Any) -> Any:
 
 
 def _resolve_default_config(Joystick) -> Any:
-    """Get Joystick's default_config without instantiating it -- the
-    constructor is what's failing, so we can't go env.default_config()."""
+    """Get Joystick.default_config without instantiating Joystick."""
     import importlib
 
     mod = importlib.import_module(Joystick.__module__)
@@ -154,15 +145,70 @@ def _resolve_default_config(Joystick) -> Any:
     return None
 
 
+@contextmanager
+def _patch_go1_constants_for_go2():
+    """Temporarily rebind name constants in go1_constants to their Go2 values.
+
+    Go1 caches body/site/geom IDs during _post_init by name lookup against
+    consts.ROOT_BODY, consts.FEET_SITES, etc. Our Go2 model uses different
+    names (base vs trunk, FL_foot vs FL). We override the constants for the
+    duration of _post_init so the cached IDs point at the right entities in
+    our Go2 model, then restore.
+
+    Restoring is important so any code that still uses Go1 in the same
+    process sees the original values.
+    """
+    try:
+        from mujoco_playground._src.locomotion.go1 import go1_constants as g1c
+    except ImportError:
+        # No Go1 constants module to patch; just no-op.
+        yield
+        return
+
+    # Map go1_constants attribute names to our Go2 override values.
+    overrides = {
+        "ROOT_BODY": consts.ROOT_BODY,
+        "FEET_SITES": consts.FEET_SITES,
+        "FEET_GEOMS": consts.FEET_GEOMS,
+        "FEET_POS_SENSOR": consts.FEET_POS_SENSOR,
+        # Sensor names happen to match between Go1 and Go2; included for
+        # completeness so we touch every name lookup go1_constants exposes.
+        "GYRO_SENSOR": consts.GYRO_SENSOR,
+        "LOCAL_LINVEL_SENSOR": consts.LOCAL_LINVEL_SENSOR,
+        "ACCELEROMETER_SENSOR": consts.ACCELEROMETER_SENSOR,
+        "UPVECTOR_SENSOR": consts.UPVECTOR_SENSOR,
+        "FORWARDVECTOR_SENSOR": consts.FORWARDVECTOR_SENSOR,
+        "GLOBAL_LINVEL_SENSOR": consts.GLOBAL_LINVEL_SENSOR,
+        "GLOBAL_ANGVEL_SENSOR": consts.GLOBAL_ANGVEL_SENSOR,
+    }
+
+    saved: dict[str, Any] = {}
+    sentinel = object()
+    for name, value in overrides.items():
+        saved[name] = getattr(g1c, name, sentinel)
+        setattr(g1c, name, value)
+
+    try:
+        yield
+    finally:
+        for name, original in saved.items():
+            if original is sentinel:
+                # Attribute didn't exist before; leave it (deleting could
+                # surprise other importers that snapshotted it).
+                continue
+            setattr(g1c, name, original)
+
+
 def make_go2_joystick_env(env_config: Any = None):
     """Build a Joystick env on the Go2 robot.
 
-    1. Patch Go1's get_assets() to ALSO return the mesh files (pip install
-       ships only XMLs + PNGs, no meshes).
-    2. Resolve default config and force impl='jax' to dodge the mujoco/warp
-       ABI mismatch in mjx.put_model.
-    3. Instantiate Go1 Joystick (now compiles).
-    4. Swap to our Go2 mj_model / mjx_model.
+    1. Patch Go1's get_assets() to ALSO return meshes (pip install ships
+       only XMLs + PNGs).
+    2. Force impl='jax' on the env config (dodge mujoco/warp ABI mismatch).
+    3. Instantiate Go1 Joystick (compiles Go1 model + caches its IDs).
+    4. Swap mj_model/mjx_model to our Go2 compile.
+    5. Re-run _post_init under a constants-patch so Go1's by-name lookups
+       resolve against the Go2 model.
     """
     import mujoco
     from mujoco import mjx
@@ -180,9 +226,7 @@ def make_go2_joystick_env(env_config: Any = None):
 
     original_get_assets = getattr(go1_base, "get_assets", None)
     if original_get_assets is None:
-        raise RuntimeError(
-            f"Could not find get_assets on {go1_base.__name__}."
-        )
+        raise RuntimeError(f"No get_assets on {go1_base.__name__}.")
 
     def patched_get_assets():
         d = dict(original_get_assets())
@@ -190,7 +234,6 @@ def make_go2_joystick_env(env_config: Any = None):
             d.setdefault(k, v)
         return d
 
-    # Force jax backend at config-creation time so __init__ sees the right impl.
     if env_config is None:
         env_config = _resolve_default_config(Joystick)
     env_config = _force_jax_backend(env_config)
@@ -218,7 +261,8 @@ def make_go2_joystick_env(env_config: Any = None):
                 pass
 
     if hasattr(env, "_post_init"):
-        env._post_init()
+        with _patch_go1_constants_for_go2():
+            env._post_init()
 
     return env
 
@@ -237,8 +281,7 @@ def _find_go1_joystick_class():
         except (ImportError, AttributeError) as e:
             last_err = e
     raise ImportError(
-        f"Could not find mujoco_playground's Go1 Joystick class. "
-        f"Tried: {candidate_paths}. Last error: {last_err}"
+        f"Could not find Go1 Joystick. Tried: {candidate_paths}. Last error: {last_err}"
     )
 
 
@@ -255,6 +298,5 @@ def _find_go1_base_module():
         except ImportError as e:
             last_err = e
     raise ImportError(
-        f"Could not find mujoco_playground's Go1 base module. "
-        f"Tried: {candidate_paths}. Last error: {last_err}"
+        f"Could not find Go1 base. Tried: {candidate_paths}. Last error: {last_err}"
     )
