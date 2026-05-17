@@ -28,41 +28,105 @@ from robot_pet_cat.motion import go2_constants as consts
 def _menagerie_go2_dir() -> Path:
     """Locate mujoco_menagerie's unitree_go2 directory at runtime.
 
-    mujoco_playground bundles a checkout of mujoco_menagerie; we reuse the
-    same one so versions stay aligned. The location has drifted between
-    playground releases, so we try a few candidates and raise a helpful
-    error if none works.
+    mujoco_playground does NOT bundle menagerie meshes inside its wheel --
+    they get cloned on-demand to a cache dir on first env load. The exact
+    hook has drifted between playground releases; we try several strategies:
+
+      1. Import MENAGERIE_PATH from a known playground module (any version
+         where Go1 envs work has this somewhere).
+      2. Honor an explicit override via $MUJOCO_PLAYGROUND_MENAGERIE.
+      3. Check the standard playground cache: ~/.cache/mujoco_menagerie.
+      4. Walk a few candidate paths inside the installed playground tree
+         (covers historic layouts).
+      5. As a last resort, git-clone menagerie into a cache dir.
+
+    The git-clone fallback is opt-in via $ROBOT_PET_CAT_AUTO_FETCH_MENAGERIE=1
+    so we never silently pull megabytes of meshes during import.
     """
-    from mujoco_playground._src import mjx_env  # noqa: PLC0415
+    import os
 
+    # 1. Find MENAGERIE_PATH that Go1 already uses, so we stay in sync with
+    # whatever cache hook playground itself respects.
     candidates: list[Path] = []
-    # Newer playground releases expose ROOT explicitly.
-    if hasattr(mjx_env, "ROOT_PATH"):
-        candidates.append(Path(mjx_env.ROOT_PATH) / "mujoco_menagerie" / "unitree_go2")
-    # Common layout: <playground>/_src/mujoco_menagerie/unitree_go2/
-    mjx_env_dir = Path(mjx_env.__file__).resolve().parent
-    candidates.append(mjx_env_dir / "mujoco_menagerie" / "unitree_go2")
-    candidates.append(mjx_env_dir.parent / "mujoco_menagerie" / "unitree_go2")
-    # Some setups co-locate menagerie under the package root.
-    import mujoco_playground  # noqa: PLC0415
+    for mod_name in (
+        "mujoco_playground._src.locomotion.go1.base",
+        "mujoco_playground._src.locomotion.go1.go1_constants",
+        "mujoco_playground._src.locomotion.unitree_go1.base",
+        "mujoco_playground._src.mjx_env",
+        "mujoco_playground._src.menagerie",
+    ):
+        try:
+            mod = __import__(mod_name, fromlist=["MENAGERIE_PATH"])
+        except ImportError:
+            continue
+        mp = getattr(mod, "MENAGERIE_PATH", None) or getattr(mod, "MENAGERIE_ROOT", None)
+        if mp is not None:
+            candidates.append(Path(mp) / "unitree_go2")
 
-    pkg_root = Path(mujoco_playground.__file__).resolve().parent
-    candidates.append(pkg_root / "mujoco_menagerie" / "unitree_go2")
+    # 2. Explicit override.
+    env_override = os.environ.get("MUJOCO_PLAYGROUND_MENAGERIE")
+    if env_override:
+        candidates.append(Path(env_override) / "unitree_go2")
+
+    # 3. Standard XDG cache location playground tends to use.
+    candidates.append(Path.home() / ".cache" / "mujoco_menagerie" / "unitree_go2")
+
+    # 4. Walk likely paths inside the installed playground tree.
+    try:
+        import mujoco_playground
+
+        pkg_root = Path(mujoco_playground.__file__).resolve().parent
+        for sub in (
+            pkg_root / "mujoco_menagerie" / "unitree_go2",
+            pkg_root / "_src" / "mujoco_menagerie" / "unitree_go2",
+            pkg_root.parent / "mujoco_menagerie" / "unitree_go2",
+        ):
+            candidates.append(sub)
+    except ImportError:
+        pass
 
     for c in candidates:
         if (c / "go2_mjx.xml").is_file():
             return c
 
+    # 5. Opt-in last-resort fetch.
+    if os.environ.get("ROBOT_PET_CAT_AUTO_FETCH_MENAGERIE") == "1":
+        return _fetch_menagerie_go2()
+
     tried = "\n  ".join(str(c) for c in candidates)
     raise FileNotFoundError(
-        "Could not locate mujoco_menagerie/unitree_go2. "
-        "Tried:\n  " + tried + "\n"
-        "If you installed mujoco_playground from source, the menagerie "
-        "submodule may not have been initialized. Try: "
-        "`git -C $(python -c 'import mujoco_playground, pathlib; "
-        "print(pathlib.Path(mujoco_playground.__file__).parent.parent.parent)') "
-        "submodule update --init --recursive`."
+        "Could not locate mujoco_menagerie/unitree_go2.\n"
+        "Tried:\n  " + tried + "\n\n"
+        "Fix by one of:\n"
+        "  (a) `python scripts/fetch_menagerie.py`  (clones menagerie into "
+        "~/.cache/mujoco_menagerie -- ~50 MB)\n"
+        "  (b) `ROBOT_PET_CAT_AUTO_FETCH_MENAGERIE=1 python scripts/smoke_test_go2_env.py`\n"
+        "  (c) Set $MUJOCO_PLAYGROUND_MENAGERIE to your existing menagerie checkout."
     )
+
+
+def _fetch_menagerie_go2() -> Path:
+    """Clone mujoco_menagerie into the user's cache and return the Go2 dir."""
+    import subprocess
+
+    cache = Path.home() / ".cache" / "mujoco_menagerie"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    if not (cache / ".git").is_dir():
+        print(f"[go2_base] cloning mujoco_menagerie -> {cache}")
+        subprocess.check_call(
+            [
+                "git", "clone", "--depth", "1",
+                "https://github.com/google-deepmind/mujoco_menagerie.git",
+                str(cache),
+            ]
+        )
+    go2 = cache / "unitree_go2"
+    if not (go2 / "go2_mjx.xml").is_file():
+        raise FileNotFoundError(
+            f"Fetched menagerie at {cache} but unitree_go2/go2_mjx.xml is missing. "
+            "Has the menagerie layout changed?"
+        )
+    return go2
 
 
 def get_assets() -> dict[str, bytes]:
@@ -87,8 +151,6 @@ def get_assets() -> dict[str, bytes]:
     go2_dir = _menagerie_go2_dir()
     for p in go2_dir.rglob("*"):
         if p.is_file() and p.suffix.lower() in {".xml", ".stl", ".obj", ".png", ".jpg"}:
-            # Use forward-slash relative path as the key, since MJCF paths
-            # are POSIX-style.
             rel = p.relative_to(go2_dir).as_posix()
             assets[rel] = p.read_bytes()
             # Also expose by basename so a bare include="go2_mjx.xml" works.
@@ -110,10 +172,9 @@ def make_go2_joystick_env(env_config: Any = None):
     trying both. If neither hook is present, fall back to a manual
     construction using their Joystick __init__.
     """
-    import mujoco  # noqa: PLC0415
-    from mujoco import mjx  # noqa: PLC0415
+    import mujoco
+    from mujoco import mjx
 
-    # Locate the Go1 joystick class. Module path varies by version.
     Joystick = _find_go1_joystick_class()
 
     scene_xml_str = consts.FEET_ONLY_FLAT_TERRAIN_XML.read_text()
@@ -124,10 +185,8 @@ def make_go2_joystick_env(env_config: Any = None):
     else:
         env = Joystick(config=env_config)
 
-    # Hot-swap the underlying mujoco model from our Go2 XML.
     mj_model = mujoco.MjModel.from_xml_string(scene_xml_str, assets=assets)
     mjx_model = mjx.put_model(mj_model)
-    # Best-effort: most playground envs expose these attribute names.
     for attr, value in (
         ("_mj_model", mj_model),
         ("mj_model", mj_model),
@@ -140,8 +199,6 @@ def make_go2_joystick_env(env_config: Any = None):
             except AttributeError:
                 pass
 
-    # Some envs cache derived data in _post_init; re-run it if present so the
-    # cached site/body/geom ids reflect the new model.
     if hasattr(env, "_post_init"):
         env._post_init()
 
