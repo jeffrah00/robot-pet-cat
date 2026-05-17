@@ -4,7 +4,12 @@
 
 # --- AMP scalars -----------------------------------------------------------
 motion_clips_dir: data/motion_clips
-style_reward_weight: 2.0       # lambda on r_style in the augmented reward
+# Style was 2.0 in the first v2 run -- D dominated, policy collapsed to
+# "stand still" because that's a moderate-style + zero-task local optimum.
+# Drop style to 0.5 so task reward (track the brain-issued velocity command)
+# is the dominant signal and the policy actually moves; AMP then biases the
+# motion *style* toward catlike without overpowering it.
+style_reward_weight: 0.5
 task_reward_weight: 1.0
 use_qvel_in_features: false
 
@@ -36,13 +41,4 @@ ppo:
   policy_hidden_sizes: [512, 256, 128]
   value_hidden_sizes:  [512, 256, 128]
 
-# --- Run-level -------------------------------------------------------------
-seed: 0
-log_interval_iters: 10
-eval_interval_iters: 100
-checkpoint_interval_iters: 500
-checkpoint_dir: checkpoints/motion_v2
-
-# Optional: warm-start from the v1 PPO ckpt so we skip the cold-start
-# exploration phase. Comment out for a from-scratch run.
-init_policy_ckpt: checkpoints/motion/ppo_params.pkl
+# --- Run-level ------------------------------------------------------------

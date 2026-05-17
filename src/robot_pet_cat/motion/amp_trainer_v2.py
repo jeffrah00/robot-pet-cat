@@ -173,11 +173,24 @@ def train(cfg: AMPTrainConfigV2) -> None:
         with cfg.init_policy_ckpt.open("rb") as f:
             init_params = pickle.load(f)
         # brax PPO pickled "params" is a (normalizer_params, policy_params,
-        # value_params) triple in recent versions. Probe and unpack.
+        # value_params) triple in recent versions. Load all three so the
+        # warm-started policy sees obs in the scale it was trained on.
+        # Without this the policy effectively cold-starts because our fresh
+        # normalizer (mean=0/std=1) makes its learned features useless --
+        # this was the cause of v2's r_task being stuck at 0.000.
         if isinstance(init_params, tuple) and len(init_params) == 3:
-            _, policy_params, value_params = init_params
+            normalizer_params, policy_params, value_params = init_params
+            print("[amp-v2]   loaded normalizer + policy + value from v1 ckpt")
         elif isinstance(init_params, tuple) and len(init_params) == 2:
             policy_params, value_params = init_params
+            print("[amp-v2]   loaded policy + value (no normalizer in ckpt)")
+        elif isinstance(init_params, dict):
+            # v2 ckpt format: {"policy", "value", "disc", "normalizer", ...}
+            policy_params = init_params["policy"]
+            value_params = init_params["value"]
+            if init_params.get("normalizer") is not None:
+                normalizer_params = init_params["normalizer"]
+            print("[amp-v2]   loaded from v2 dict ckpt")
         opt_state = optimizer.init((policy_params, value_params))
 
     # --- 4. Discriminator ---
