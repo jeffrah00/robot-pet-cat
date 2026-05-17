@@ -28,7 +28,7 @@ episode_length_s: 20.0
 
 # --- PPO -------------------------------------------------------------------
 ppo:
-  total_iterations: 5000       # ~5k * 4096 envs * 20 unroll = ~410M env steps
+  total_iterations: 5000
   unroll_length: 20
   num_minibatches: 32
   num_updates_per_batch: 4
@@ -41,4 +41,13 @@ ppo:
   policy_hidden_sizes: [512, 256, 128]
   value_hidden_sizes:  [512, 256, 128]
 
-# --- Run-level ------------------------------------------------------------
+# --- Run-level -------------------------------------------------------------
+seed: 0
+log_interval_iters: 10
+eval_interval_iters: 100
+checkpoint_interval_iters: 500
+checkpoint_dir: checkpoints/motion_v2
+
+# Warm-start from the v1 PPO ckpt so we skip the cold-start exploration
+# phase. Comment out for a from-scratch run.
+init_policy_ckpt: checkpoints/motion/ppo_params.pkl
