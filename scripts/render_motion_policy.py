@@ -41,8 +41,28 @@ import numpy as np
 
 
 def _load_params(ckpt_path: Path):
+    """Load a v1 or v2 checkpoint and return (normalizer_params, policy_params).
+
+    v1 (amp_trainer.py): pickled as either a single object, a (policy, value)
+       tuple, or a (normalizer, policy, value) triple depending on brax version.
+    v2 (amp_trainer_v2.py): pickled as a dict
+       {"policy", "value", "disc", "normalizer", "iteration"}.
+    """
     with ckpt_path.open("rb") as f:
-        return pickle.load(f)
+        raw = pickle.load(f)
+
+    if isinstance(raw, dict) and "policy" in raw:
+        # v2 dict format
+        return raw.get("normalizer"), raw["policy"]
+    if isinstance(raw, tuple) and len(raw) == 3:
+        normalizer, policy, _value = raw
+        return normalizer, policy
+    if isinstance(raw, tuple) and len(raw) == 2:
+        # (policy, value) -- no normalizer saved. Return None and let the
+        # render caller build a default one.
+        return None, raw[0]
+    # Bare params (no normalizer). Caller handles.
+    return None, raw
 
 
 def _build_env_and_inference(seed: int):
@@ -114,11 +134,31 @@ def render_policy(
     import imageio.v3 as iio
 
     print(f"[render] loading params from {ckpt_path}")
-    params = _load_params(ckpt_path)
+    normalizer_params, policy_params = _load_params(ckpt_path)
+    print(f"[render]   normalizer present: {normalizer_params is not None}")
 
     print("[render] building env + inference network")
     env, make_inference_fn = _build_env_and_inference(seed=seed)
-    inference_fn = make_inference_fn(params, deterministic=deterministic)
+
+    # make_inference_fn expects a (normalizer_params, policy_params) tuple
+    # in the brax convention. If we didn't recover a normalizer, build a
+    # neutral one (mean=0/std=1) so the policy at least runs -- it'll
+    # produce out-of-scale actions but better than crashing.
+    if normalizer_params is None:
+        from brax.training.acme import running_statistics, specs
+        obs_size = env.observation_size
+        def _to_spec(size):
+            shape = (size,) if isinstance(size, int) else tuple(size)
+            return specs.Array(shape, jnp.float32)
+        if isinstance(obs_size, dict):
+            obs_spec = {k: _to_spec(v) for k, v in obs_size.items()}
+        else:
+            obs_spec = _to_spec(obs_size)
+        normalizer_params = running_statistics.init_state(obs_spec)
+
+    inference_fn = make_inference_fn(
+        (normalizer_params, policy_params), deterministic=deterministic,
+    )
     inference_fn = jax.jit(inference_fn)
 
     mj_model = getattr(env, "mj_model", None) or getattr(env, "_mj_model", None)
