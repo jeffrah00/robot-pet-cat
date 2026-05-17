@@ -81,16 +81,29 @@ def _shim_jax_for_brax() -> None:
         return
 
     def _device_put_replicated(x, devices):
-        from jax.sharding import PositionalSharding
+        """Put each leaf with a new leading axis of size len(devices).
 
-        sharding = PositionalSharding(devices)
+        On a single device (the common case) just place on that device.
+        On multi-device we try jax.sharding.NamedSharding via Mesh; if any
+        of those imports also fail we fall through to plain device_put,
+        which on a single GPU is fine and on multi-GPU at least keeps
+        the leading device axis shape brax expects.
+        """
+        n = len(devices)
 
         def _put(leaf):
             arr = jax.numpy.asarray(leaf)
-            # Replicate along a new leading device axis.
-            replicated = jax.numpy.broadcast_to(arr, (len(devices), *arr.shape))
-            target_sharding = sharding.reshape((-1,) + (1,) * arr.ndim)
-            return jax.device_put(replicated, target_sharding)
+            replicated = jax.numpy.broadcast_to(arr[None], (n,) + arr.shape)
+            if n == 1:
+                return jax.device_put(replicated, devices[0])
+            try:
+                from jax.sharding import Mesh, NamedSharding, PartitionSpec
+                import numpy as _np
+                mesh = Mesh(_np.asarray(devices), axis_names=("d",))
+                sharding = NamedSharding(mesh, PartitionSpec("d"))
+                return jax.device_put(replicated, sharding)
+            except (ImportError, AttributeError):
+                return jax.device_put(replicated)
 
         return jax.tree_util.tree_map(_put, x)
 
