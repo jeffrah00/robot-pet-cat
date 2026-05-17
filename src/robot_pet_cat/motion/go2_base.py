@@ -82,9 +82,7 @@ def get_assets() -> dict[str, bytes]:
     """Return the asset dict mujoco needs to compile our Go2 scene from a string.
 
     IMPORTANT: mujoco's MjModel.from_xml_string rejects duplicate basenames
-    in the assets dict ("Repeated file name in assets dict: foo.stl"). It
-    keys lookups by basename, so we MUST emit each file under its basename
-    only -- never under both a relative path and a basename.
+    in the assets dict. Use basename-only keys.
     """
     assets: dict[str, bytes] = {}
 
@@ -104,12 +102,8 @@ def _go1_mesh_injection(menagerie_root: Path) -> dict[str, bytes]:
     """Read Go1 meshes and key them by basename for mujoco's assets dict.
 
     mujoco_playground's Go1 get_assets() returns XMLs + PNG textures but NOT
-    the mesh files. Go1 XMLs reference meshes via either meshdir+filename or
-    long relative paths; mujoco resolves both by stripping to basename. So we
-    just inject {basename: bytes} for every Go1 STL/OBJ.
-
-    Must not emit the same basename twice -- mujoco raises
-    "Repeated file name in assets dict" on duplicates.
+    the mesh files. We inject {basename: bytes} for every Go1 STL/OBJ.
+    Basename-only -- mujoco rejects duplicates.
     """
     extras: dict[str, bytes] = {}
     go1_assets = menagerie_root / "unitree_go1" / "assets"
@@ -122,14 +116,53 @@ def _go1_mesh_injection(menagerie_root: Path) -> dict[str, bytes]:
     return extras
 
 
+def _force_jax_backend(env_config: Any) -> Any:
+    """Override env_config.impl to 'jax' to avoid a mujoco/warp ABI mismatch.
+
+    Recent mujoco.mjx defaults Go1's config to impl='warp', and the warp
+    version typically installed alongside it doesn't have
+    `warp.types.warp_type_to_np_dtype`. The JAX backend is the standard
+    CPU/GPU path with no warp dependency, so we just force it.
+    """
+    if env_config is None:
+        return env_config
+    if hasattr(env_config, "impl"):
+        try:
+            env_config.impl = "jax"
+        except (AttributeError, TypeError):
+            pass
+    return env_config
+
+
+def _resolve_default_config(Joystick) -> Any:
+    """Get Joystick's default_config without instantiating it -- the
+    constructor is what's failing, so we can't go env.default_config()."""
+    import importlib
+
+    mod = importlib.import_module(Joystick.__module__)
+    if hasattr(mod, "default_config") and callable(mod.default_config):
+        return mod.default_config()
+    for name in ("default_config", "DEFAULT_CONFIG"):
+        attr = getattr(Joystick, name, None)
+        if callable(attr):
+            try:
+                return attr()
+            except TypeError:
+                pass
+        elif attr is not None:
+            return attr
+    return None
+
+
 def make_go2_joystick_env(env_config: Any = None):
     """Build a Joystick env on the Go2 robot.
 
-    1. Patch Go1's module-level get_assets() to ALSO return the mesh files
-       (it normally returns only XMLs + PNGs, which makes mujoco compile
-       fail in pip-only installs). Revert the patch after Joystick().
-    2. Instantiate Go1 Joystick (Go1 MJCF compiles successfully now).
-    3. Swap the env's mj_model / mjx_model for our Go2 compile.
+    1. Patch Go1's get_assets() to ALSO return the mesh files (pip install
+       ships only XMLs + PNGs, no meshes).
+    2. Resolve default config and force impl='jax' to dodge the mujoco/warp
+       ABI mismatch in mjx.put_model.
+    3. Instantiate Go1 Joystick (now compiles).
+    4. Swap to our Go2 mj_model / mjx_model.
     """
     import mujoco
     from mujoco import mjx
@@ -148,17 +181,19 @@ def make_go2_joystick_env(env_config: Any = None):
     original_get_assets = getattr(go1_base, "get_assets", None)
     if original_get_assets is None:
         raise RuntimeError(
-            f"Could not find get_assets on {go1_base.__name__}; "
-            "playground API has changed and our injection strategy needs updating."
+            f"Could not find get_assets on {go1_base.__name__}."
         )
 
     def patched_get_assets():
         d = dict(original_get_assets())
-        # setdefault so the original wins on collisions (XMLs/PNGs already
-        # exist in Go1's dict; we only add genuinely missing meshes).
         for k, v in extras.items():
             d.setdefault(k, v)
         return d
+
+    # Force jax backend at config-creation time so __init__ sees the right impl.
+    if env_config is None:
+        env_config = _resolve_default_config(Joystick)
+    env_config = _force_jax_backend(env_config)
 
     go1_base.get_assets = patched_get_assets
     try:
