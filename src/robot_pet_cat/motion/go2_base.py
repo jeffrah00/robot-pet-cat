@@ -1,21 +1,4 @@
-"""Go2Env base class -- the Go2 analog of mujoco_playground's Go1Env.
-
-Architecturally this is a thin subclass of the Go1 base env. The reason that
-works is:
-  - Joint names (FL_hip_joint, FL_thigh_joint, FL_calf_joint, ...) are
-    *identical* between Go1 and Go2 in menagerie. Anything that indexes
-    qpos / qvel / ctrl by joint name keeps working.
-  - The foot collision geom names (FL/FR/RL/RR) also happen to match.
-  - We swap in our own scene XML (with the right asset references) and override
-    get_assets() so the compiled MJCF pulls Go2 meshes from menagerie/unitree_go2.
-  - Site naming differs (Go2 uses *_foot) but the only consumers of foot site
-    names are in our scene XML's sensor block -- which we wrote against the
-    Go2 names directly -- so this never reaches the Python layer.
-
-If you swap menagerie versions and something breaks, the failure mode is
-usually "site/body/geom not found"; in that case verify ROOT_BODY, FEET_SITES,
-and FEET_GEOMS in go2_constants against the current menagerie XML.
-"""
+"""Go2Env base class -- the Go2 analog of mujoco_playground's Go1Env."""
 
 from __future__ import annotations
 
@@ -75,10 +58,7 @@ def _menagerie_go2_dir() -> Path:
     raise FileNotFoundError(
         "Could not locate mujoco_menagerie/unitree_go2.\n"
         "Tried:\n  " + tried + "\n\n"
-        "Fix by one of:\n"
-        "  (a) `python scripts/fetch_menagerie.py`\n"
-        "  (b) `ROBOT_PET_CAT_AUTO_FETCH_MENAGERIE=1 ...`\n"
-        "  (c) Set $MUJOCO_PLAYGROUND_MENAGERIE."
+        "Fix: python scripts/fetch_menagerie.py"
     )
 
 
@@ -88,13 +68,9 @@ def _fetch_menagerie_go2() -> Path:
     cache = Path.home() / ".cache" / "mujoco_menagerie"
     cache.parent.mkdir(parents=True, exist_ok=True)
     if not (cache / ".git").is_dir():
-        print(f"[go2_base] cloning mujoco_menagerie -> {cache}")
         subprocess.check_call(
-            [
-                "git", "clone", "--depth", "1",
-                "https://github.com/google-deepmind/mujoco_menagerie.git",
-                str(cache),
-            ]
+            ["git", "clone", "--depth", "1",
+             "https://github.com/google-deepmind/mujoco_menagerie.git", str(cache)]
         )
     go2 = cache / "unitree_go2"
     if not (go2 / "go2_mjx.xml").is_file():
@@ -103,7 +79,13 @@ def _fetch_menagerie_go2() -> Path:
 
 
 def get_assets() -> dict[str, bytes]:
-    """Return the asset dict mujoco needs to compile our Go2 scene from a string."""
+    """Return the asset dict mujoco needs to compile our Go2 scene from a string.
+
+    IMPORTANT: mujoco's MjModel.from_xml_string rejects duplicate basenames
+    in the assets dict ("Repeated file name in assets dict: foo.stl"). It
+    keys lookups by basename, so we MUST emit each file under its basename
+    only -- never under both a relative path and a basename.
+    """
     assets: dict[str, bytes] = {}
 
     for p in consts.ROOT_PATH.iterdir():
@@ -113,48 +95,40 @@ def get_assets() -> dict[str, bytes]:
     go2_dir = _menagerie_go2_dir()
     for p in go2_dir.rglob("*"):
         if p.is_file() and p.suffix.lower() in {".xml", ".stl", ".obj", ".png", ".jpg"}:
-            rel = p.relative_to(go2_dir).as_posix()
-            assets[rel] = p.read_bytes()
             assets.setdefault(p.name, p.read_bytes())
 
     return assets
 
 
 def _go1_mesh_injection(menagerie_root: Path) -> dict[str, bytes]:
-    """Read Go1 meshes and key them under the relative paths the Go1 XML uses.
+    """Read Go1 meshes and key them by basename for mujoco's assets dict.
 
-    Critical context: mujoco_playground's Go1 get_assets() returns only
-    XMLs + PNG textures -- no meshes. The mesh references in the Go1 XML
-    look like
-        <mesh file="../../../../../../mujoco_menagerie/unitree_go1/assets/trunk.stl"/>
-    When mujoco.MjModel.from_xml_string can't find that key in the assets
-    dict it falls back to opening from disk, which fails in pip installs.
+    mujoco_playground's Go1 get_assets() returns XMLs + PNG textures but NOT
+    the mesh files. Go1 XMLs reference meshes via either meshdir+filename or
+    long relative paths; mujoco resolves both by stripping to basename. So we
+    just inject {basename: bytes} for every Go1 STL/OBJ.
 
-    We fix it by augmenting the assets dict with those exact relative-path
-    keys (plus a basename fallback since mujoco's lookup tries that too).
-    Same trick for .obj if menagerie ships meshes that way.
+    Must not emit the same basename twice -- mujoco raises
+    "Repeated file name in assets dict" on duplicates.
     """
     extras: dict[str, bytes] = {}
     go1_assets = menagerie_root / "unitree_go1" / "assets"
     if not go1_assets.is_dir():
         return extras
-    rel_prefix = "../../../../../../mujoco_menagerie/unitree_go1/assets/"
     for mesh in go1_assets.iterdir():
         if not mesh.is_file() or mesh.suffix.lower() not in {".stl", ".obj"}:
             continue
-        data = mesh.read_bytes()
-        extras[rel_prefix + mesh.name] = data
-        extras.setdefault(mesh.name, data)
+        extras.setdefault(mesh.name, mesh.read_bytes())
     return extras
 
 
 def make_go2_joystick_env(env_config: Any = None):
     """Build a Joystick env on the Go2 robot.
 
-    1. Patch Go1's module-level get_assets() to ALSO return the STL meshes
+    1. Patch Go1's module-level get_assets() to ALSO return the mesh files
        (it normally returns only XMLs + PNGs, which makes mujoco compile
        fail in pip-only installs). Revert the patch after Joystick().
-    2. Instantiate Go1 Joystick (compiles Go1's MJCF successfully now).
+    2. Instantiate Go1 Joystick (Go1 MJCF compiles successfully now).
     3. Swap the env's mj_model / mjx_model for our Go2 compile.
     """
     import mujoco
@@ -180,7 +154,10 @@ def make_go2_joystick_env(env_config: Any = None):
 
     def patched_get_assets():
         d = dict(original_get_assets())
-        d.update(extras)
+        # setdefault so the original wins on collisions (XMLs/PNGs already
+        # exist in Go1's dict; we only add genuinely missing meshes).
+        for k, v in extras.items():
+            d.setdefault(k, v)
         return d
 
     go1_base.get_assets = patched_get_assets
@@ -225,7 +202,7 @@ def _find_go1_joystick_class():
         except (ImportError, AttributeError) as e:
             last_err = e
     raise ImportError(
-        "Could not find mujoco_playground's Go1 Joystick class. "
+        f"Could not find mujoco_playground's Go1 Joystick class. "
         f"Tried: {candidate_paths}. Last error: {last_err}"
     )
 
@@ -243,6 +220,6 @@ def _find_go1_base_module():
         except ImportError as e:
             last_err = e
     raise ImportError(
-        "Could not find mujoco_playground's Go1 base module. "
+        f"Could not find mujoco_playground's Go1 base module. "
         f"Tried: {candidate_paths}. Last error: {last_err}"
     )
