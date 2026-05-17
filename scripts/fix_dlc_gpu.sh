@@ -65,10 +65,18 @@ echo "=== installing GPU torch wheels ($CUDA_VER) ==="
 # Also uninstall any standalone nvidia-cudnn-cu12 first -- if both
 # torch's bundled cuDNN and a standalone one are present, the loader
 # picks the wrong one and you get NOT_INITIALIZED.
-$RUNNER pip uninstall -y nvidia-cudnn-cu12 || true
+# Three-step install. --no-deps for torch+torchvision (so we don't
+# disturb DLC's pandas/numpy pins), then explicitly install
+# nvidia-cudnn-cu12 == 8.9.2.26 (the version torch 2.3.1 binds against).
+# Without that package, torch._C fails to load with
+#   ImportError: libcudnn.so.8: cannot open shared object file
+$RUNNER pip uninstall -y torch torchvision nvidia-cudnn-cu12 nvidia-cudnn-cu11 || true
 $RUNNER pip install --upgrade --force-reinstall --no-deps \
   torch==2.3.1 torchvision==0.18.1 \
   --index-url "https://download.pytorch.org/whl/${CUDA_VER}"
+# nvidia-cudnn-cu12 lives on regular PyPI, not the pytorch index. Pin to
+# 8.9.2.26 because that's what torch 2.3.1's torch._C is built against.
+$RUNNER pip install nvidia-cudnn-cu12==8.9.2.26
 
 echo
 echo "=== verifying ==="
