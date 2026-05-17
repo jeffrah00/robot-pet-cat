@@ -80,6 +80,9 @@ class ExtractConfig:
     pcutoff: float = 0.4
     cat_body_length_m: float = 0.45
     floor_y_px: float | None = None
+    # Bumping batch_size from DLC's default of 1 to 8 typically gives 3-5x
+    # throughput on GPU at zero accuracy cost. Higher is GPU-memory-bound.
+    batch_size: int = 8
 
 
 def get_video_meta(video_path: Path) -> tuple[float, int]:
@@ -111,7 +114,10 @@ def run_superanimal(cfg: ExtractConfig):
     print(f"[pose] running DLC SuperAnimal on {cfg.video_path}")
     # DLC 3.x signature: explicit model + detector names. (DLC 2.3.x doesn't
     # accept these and the model is implicit; we're on 3.x via conda env.)
-    deeplabcut.video_inference_superanimal(
+    # Pass batch_size if DLC's video_inference_superanimal accepts it. The
+    # signature has flipped a few times across DLC 3.x; try with-kw then
+    # without so we don't break on older builds.
+    common_kwargs = dict(
         videos=[str(cfg.video_path)],
         superanimal_name=cfg.superanimal,
         model_name=cfg.model_name,
@@ -120,6 +126,16 @@ def run_superanimal(cfg: ExtractConfig):
         video_adapt=False,
         pcutoff=cfg.pcutoff,
     )
+    try:
+        deeplabcut.video_inference_superanimal(
+            **common_kwargs, batch_size=cfg.batch_size,
+        )
+    except TypeError as e:
+        if "batch_size" in str(e):
+            print(f"[pose] DLC didn't accept batch_size; retrying without it")
+            deeplabcut.video_inference_superanimal(**common_kwargs)
+        else:
+            raise
 
     candidates = list(cfg.video_path.parent.glob(f"{cfg.video_path.stem}*.h5"))
     if not candidates:

@@ -34,6 +34,9 @@ def main() -> int:
                    help="Assumed cat withers->hips length in meters.")
     p.add_argument("--floor-y", type=float, default=None,
                    help="Image y-pixel of the floor; inferred from lowest paw if omitted.")
+    p.add_argument("--batch-size", type=int, default=8, dest="batch_size",
+                   help="DLC video inference batch size. 8 is a good GPU default; "
+                        "lower if you hit OOM, higher if you have headroom.")
     args = p.parse_args()
 
     out = args.out or (Path("data/motion_clips_raw") / f"{args.video.stem}.json")
@@ -46,6 +49,7 @@ def main() -> int:
         pcutoff=args.pcutoff,
         cat_body_length_m=args.body_length_m,
         floor_y_px=args.floor_y,
+        batch_size=args.batch_size,
     )
     written = extract(cfg)
     print(f"wrote {written}")
