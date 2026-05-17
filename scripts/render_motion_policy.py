@@ -23,10 +23,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import pickle
 import sys
 import time
 from pathlib import Path
+
+# MUST come before any `import mujoco`. On a headless box (RunPod, CI, any
+# server without X11) MuJoCo defaults to GLFW and fails with
+#   "an OpenGL platform library has not been loaded into this process".
+# EGL uses the NVIDIA driver's offscreen path directly -- no display needed.
+# OSMesa is the CPU fallback if no GPU is visible.
+os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
 import numpy as np
 
