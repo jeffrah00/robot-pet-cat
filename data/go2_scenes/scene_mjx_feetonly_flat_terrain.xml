@@ -1,24 +1,22 @@
 <!--
   Go2 MJX scene, feet-only collisions, flat terrain.
 
-  Mirrors mujoco_playground's Go1 scene_mjx_feetonly_flat_terrain.xml,
-  but pulls in menagerie's unitree_go2 robot definition.
+  Naming invariant Go1's joystick task relies on:
+    Per-foot sensors must be named "{foot_site_name}_{kind}", because Go1
+    builds the sensor name on the fly:
+        sensor_name = f"{site}_global_linvel"
+    with site coming from FEET_SITES. Our FEET_SITES is
+    ["FR_foot","FL_foot","RR_foot","RL_foot"] (menagerie's foot site
+    names), so our sensors must be FR_foot_global_linvel, FR_foot_pos,
+    FR_foot_floor_found, etc.
 
-  What we DON'T re-declare (menagerie's go2_mjx.xml already provides):
-    body-frame sensors (gyro, local_linvel, accelerometer, position,
-    upvector, forwardvector, global_linvel, global_angvel, orientation)
-    AND the "home" keyframe with the symmetric-hip standing pose.
-  Re-declaring any of those raises an "XML Error: repeated name" at
-  compile time. If menagerie's XML stops shipping one of them, the
-  failure mode flips to a sensor-not-found at reset/step time, and we
-  add the missing piece back here.
+  We do NOT re-declare anything menagerie's go2_mjx.xml already provides:
+    body-frame sensors (gyro, local_linvel, accelerometer, etc.) and the
+    "home" keyframe.
 
-  What we DO add: per-foot framelinvel/framepos sensors (menagerie does
-  not ship these; Go1's reward code expects them), the floor geom, and
-  floor-contact sensors via sensor_feet.xml.
-
-  Foot site names FL_foot/FR_foot/RL_foot/RR_foot match menagerie's
-  go2_mjx.xml; foot geom names FL/FR/RL/RR also match.
+  Foot geom names FL/FR/RL/RR match menagerie and match Go1's FEET_GEOMS,
+  so the floor-contact sensors in sensor_feet.xml only need renaming on
+  the sensor name side, not on the geom side.
 -->
 <mujoco model="go2_feetonly_flat_terrain">
   <include file="go2_mjx.xml"/>
@@ -48,14 +46,14 @@
   </worldbody>
 
   <sensor>
-    <framelinvel name="FR_global_linvel" objtype="site" objname="FR_foot"/>
-    <framelinvel name="FL_global_linvel" objtype="site" objname="FL_foot"/>
-    <framelinvel name="RR_global_linvel" objtype="site" objname="RR_foot"/>
-    <framelinvel name="RL_global_linvel" objtype="site" objname="RL_foot"/>
-    <framepos    name="FR_pos"           objtype="site" objname="FR_foot"/>
-    <framepos    name="FL_pos"           objtype="site" objname="FL_foot"/>
-    <framepos    name="RR_pos"           objtype="site" objname="RR_foot"/>
-    <framepos    name="RL_pos"           objtype="site" objname="RL_foot"/>
+    <framelinvel name="FR_foot_global_linvel" objtype="site" objname="FR_foot"/>
+    <framelinvel name="FL_foot_global_linvel" objtype="site" objname="FL_foot"/>
+    <framelinvel name="RR_foot_global_linvel" objtype="site" objname="RR_foot"/>
+    <framelinvel name="RL_foot_global_linvel" objtype="site" objname="RL_foot"/>
+    <framepos    name="FR_foot_pos"           objtype="site" objname="FR_foot"/>
+    <framepos    name="FL_foot_pos"           objtype="site" objname="FL_foot"/>
+    <framepos    name="RR_foot_pos"           objtype="site" objname="RR_foot"/>
+    <framepos    name="RL_foot_pos"           objtype="site" objname="RL_foot"/>
   </sensor>
 
   <include file="sensor_feet.xml"/>

@@ -8,21 +8,15 @@ module because:
     instead of +/-0.1, base height 0.27 vs 0.278).
   - We point the asset loader at unitree_go2 in menagerie, not unitree_go1.
 
-The joint names (FL_hip_joint, FL_thigh_joint, FL_calf_joint, ...) are identical
-across Go1 and Go2, so any reward logic that references qpos slices by joint
-order keeps working unchanged.
-
-We ship our own scene XML in data/go2_scenes/ rather than reusing mujoco_playground's
-Go1 scene; the latter would pull in Go1 meshes and home pose.
+Joint names (FL_hip_joint, FL_thigh_joint, FL_calf_joint, ...) are identical
+across Go1 and Go2 in menagerie, so any reward logic that references qpos
+slices by joint order keeps working unchanged.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-# Path to our hand-rolled Go2 scene XML (sits alongside the package so wheels
-# pick it up). The XML in turn pulls Go2 meshes from mujoco_menagerie via the
-# get_assets() override on Go2Env.
 ROOT_PATH = (
     Path(__file__).resolve().parents[3] / "data" / "go2_scenes"
 )
@@ -30,9 +24,6 @@ FEET_ONLY_FLAT_TERRAIN_XML = ROOT_PATH / "scene_mjx_feetonly_flat_terrain.xml"
 
 
 def task_to_xml(task_name: str) -> Path:
-    """Map a task name to its scene XML. For now only flat terrain exists;
-    rough terrain and getup variants can be added later by mirroring the Go1
-    set."""
     mapping = {
         "flat_terrain": FEET_ONLY_FLAT_TERRAIN_XML,
         "joystick_flat_terrain": FEET_ONLY_FLAT_TERRAIN_XML,
@@ -45,31 +36,30 @@ def task_to_xml(task_name: str) -> Path:
 
 
 # --- Names that appear inside the compiled MJCF -----------------------------
-# These must match the names in scene_mjx_feetonly_flat_terrain.xml (and the
-# included go2_mjx.xml from menagerie).
 
 # Go2 menagerie names the IMU site "imu" (same as Go1).
 IMU_SITE = "imu"
 
-# Go2 root body in menagerie is "base" (Go1 calls it "trunk"). If you swap
-# in a different Go2 XML and it errors at startup, this is the first thing
-# to verify with: `mujoco.MjModel.from_xml_path(...).body("base")`.
+# Go2 menagerie names the root body "base" (Go1 calls it "trunk").
 ROOT_BODY = "base"
 
-# Order MUST match the order in which feet sites appear in qpos / sensors so
-# that downstream code (rewards, swing-phase tracking) indexes consistently
-# across Go1 and Go2.
+# Foot SITES as menagerie's go2_mjx.xml declares them. The "_foot" suffix
+# matters: Go1's joystick task constructs per-foot sensor names on the fly
+# as f"{site}_global_linvel", so whatever we put here is also the prefix
+# every per-foot sensor below must use.
 FEET_SITES = ["FR_foot", "FL_foot", "RR_foot", "RL_foot"]
 
-# Foot collision geoms. Go2 menagerie names these FR/FL/RR/RL, matching Go1.
+# Foot collision GEOMS. menagerie's Go2 names these FR/FL/RR/RL, matching Go1.
 FEET_GEOMS = ["FR", "FL", "RR", "RL"]
 
-# Per-foot named sensors emitted by our scene XML.
-FEET_POS_SENSOR = [f"{f}_pos" for f in ["FR", "FL", "RR", "RL"]]
-FEET_GLOBAL_LINVEL_SENSOR = [f"{f}_global_linvel" for f in ["FR", "FL", "RR", "RL"]]
-FEET_FLOOR_FOUND_SENSOR = [f"{f}_floor_found" for f in ["FR", "FL", "RR", "RL"]]
+# Per-foot sensor names: must be exactly {site}_{kind} for every site in
+# FEET_SITES, so Go1's constructed lookups resolve.
+FEET_POS_SENSOR = [f"{s}_pos" for s in FEET_SITES]
+FEET_GLOBAL_LINVEL_SENSOR = [f"{s}_global_linvel" for s in FEET_SITES]
+FEET_FLOOR_FOUND_SENSOR = [f"{s}_floor_found" for s in FEET_SITES]
 
-# Body-frame and world-frame sensors (names mirror Go1's scene XML).
+# Body-frame and world-frame sensors (names match Go1's scene XML and
+# menagerie's go2_mjx.xml).
 GYRO_SENSOR = "gyro"
 LOCAL_LINVEL_SENSOR = "local_linvel"
 ACCELEROMETER_SENSOR = "accelerometer"
