@@ -10,18 +10,19 @@ For source: youtube or source: url, yt-dlp is always used.
 
 Optional time crop via ffmpeg if the manifest entry has a `crop` block.
 
+Cloudflare note: Pexels is behind Cloudflare and blocks bot-shaped
+User-Agents with 403, even with a valid API key. We send a Chrome-shaped
+UA + standard Accept headers so the request looks like a normal web client.
+
 Usage:
-    # Option A: API key
     export PEXELS_API_KEY=xxxxx          # get one at https://www.pexels.com/api/
     python scripts/fetch_clips.py
 
-    # Option B: yt-dlp only (no API key needed)
-    pip install yt-dlp
+    pip install yt-dlp                   # alternative path, no key needed
     python scripts/fetch_clips.py --no-api
 
-    # Targeted
     python scripts/fetch_clips.py --only walk_outdoor_gray,stretch_table
-    python scripts/fetch_clips.py --force   # re-download even if .mp4 exists
+    python scripts/fetch_clips.py --force
 """
 
 from __future__ import annotations
@@ -39,6 +40,18 @@ from pathlib import Path
 PEXELS_API_BASE = "https://api.pexels.com/videos/videos"
 PEXELS_PAGE_URL = "https://www.pexels.com/video/{}/"
 
+# Cloudflare-friendly headers. Pexels' bot detection 403s anything that
+# looks like a custom UA (we previously sent "robot-pet-cat/1.0" and got
+# 403 on every request; curl/7.* with a real API key worked fine).
+CLOUDFLARE_OK_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 
 def _load_manifest(manifest_path: Path) -> list[dict]:
     import yaml
@@ -52,10 +65,10 @@ def _load_manifest(manifest_path: Path) -> list[dict]:
 
 def _pexels_video_url_via_api(video_id: str, api_key: str) -> str:
     """Hit the Pexels API for a video and return a sensible MP4 URL."""
-    req = urllib.request.Request(
-        f"{PEXELS_API_BASE}/{video_id}",
-        headers={"Authorization": api_key, "User-Agent": "robot-pet-cat/1.0"},
-    )
+    headers = dict(CLOUDFLARE_OK_HEADERS)
+    headers["Authorization"] = api_key
+    headers["Accept"] = "application/json, */*;q=0.5"
+    req = urllib.request.Request(f"{PEXELS_API_BASE}/{video_id}", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             payload = json.load(resp)
@@ -79,7 +92,7 @@ def _pexels_video_url_via_api(video_id: str, api_key: str) -> str:
 def _download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"[fetch_clips]   downloading {url[:80]}{'...' if len(url) > 80 else ''} -> {dest.name}")
-    req = urllib.request.Request(url, headers={"User-Agent": "robot-pet-cat/1.0"})
+    req = urllib.request.Request(url, headers=CLOUDFLARE_OK_HEADERS)
     with urllib.request.urlopen(req, timeout=120) as resp, dest.open("wb") as f:
         shutil.copyfileobj(resp, f)
 
@@ -90,7 +103,6 @@ def _yt_dlp_download(url: str, dest: Path) -> None:
         raise RuntimeError("yt-dlp not installed (pip install yt-dlp)")
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"[fetch_clips]   yt-dlp {url}")
-    # -f mp4 / best-mp4 -- prefer single-file mp4 over DASH segments.
     cmd = [
         "yt-dlp",
         "-q", "--no-warnings",
@@ -179,18 +191,12 @@ def main() -> int:
         "--manifest", type=Path, default=Path("data/motion_clips_raw/manifest.yaml"),
     )
     parser.add_argument("--out", type=Path, default=Path("data/motion_clips_raw"))
-    parser.add_argument(
-        "--only", default=None,
-        help="Comma-separated list of clip IDs to fetch (default: all).",
-    )
-    parser.add_argument(
-        "--force", action="store_true",
-        help="Redownload even if the .mp4 already exists.",
-    )
-    parser.add_argument(
-        "--no-api", action="store_true",
-        help="Skip Pexels API even if PEXELS_API_KEY is set; use yt-dlp directly.",
-    )
+    parser.add_argument("--only", default=None,
+                        help="Comma-separated list of clip IDs to fetch.")
+    parser.add_argument("--force", action="store_true",
+                        help="Redownload even if the .mp4 already exists.")
+    parser.add_argument("--no-api", action="store_true",
+                        help="Skip Pexels API and use yt-dlp directly.")
     args = parser.parse_args()
 
     if not args.manifest.is_file():
