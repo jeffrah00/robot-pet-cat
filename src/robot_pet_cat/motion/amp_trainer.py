@@ -165,6 +165,19 @@ def train(cfg: AMPTrainConfig) -> None:
     from brax.training.agents.ppo import networks as ppo_networks
     from brax.training.agents.ppo import train as brax_ppo
 
+    # mujoco_playground envs return State objects with a different attribute
+    # shape than brax's wrappers expect (brax wants state.pipeline_state;
+    # playground stores its mjx data differently). Playground ships a wrapper
+    # that translates between the two; without it brax's AutoResetWrapper
+    # crashes with "AttributeError: 'State' object has no attribute 'pipeline_state'".
+    from mujoco_playground import wrapper as mjx_wrapper
+
+    env = mjx_wrapper.wrap_for_brax_training(
+        env,
+        episode_length=int(cfg.episode_length_s * 50),
+        action_repeat=1,
+    )
+
     network_kwargs = dict(
         policy_hidden_layer_sizes=tuple(cfg.ppo.policy_hidden_sizes),
         value_hidden_layer_sizes=tuple(cfg.ppo.value_hidden_sizes),
@@ -222,24 +235,3 @@ def train(cfg: AMPTrainConfig) -> None:
             _push_to_hf(ckpt_path, cfg.hf_repo)
         except Exception as e:  # noqa: BLE001
             print(f"[amp] WARNING: HF push failed: {e}")
-
-    print(f"[amp] done in {(time.time() - start) / 60:.1f} min")
-
-
-def _save_pickle(obj, path: Path) -> None:
-    import pickle
-    with open(path, "wb") as f:
-        pickle.dump(obj, f)
-
-
-def _push_to_hf(local_path: Path, repo: str) -> None:
-    from huggingface_hub import HfApi
-    api = HfApi()
-    api.create_repo(repo, exist_ok=True, repo_type="model")
-    api.upload_file(
-        path_or_fileobj=str(local_path),
-        path_in_repo=local_path.name,
-        repo_id=repo,
-        repo_type="model",
-    )
-    print(f"[amp] pushed {local_path.name} to https://huggingface.co/{repo}")
