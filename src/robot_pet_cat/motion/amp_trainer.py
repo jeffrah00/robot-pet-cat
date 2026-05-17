@@ -57,6 +57,46 @@ class AMPTrainConfig:
     hf_repo: str = "jeffrah00/go2-cat-motion"
 
 
+def _shim_jax_for_brax() -> None:
+    """Restore APIs brax depends on that current JAX has removed.
+
+    brax/training/agents/ppo/train.py calls jax.device_put_replicated, which
+    JAX deleted in favor of jax.device_put + PositionalSharding. Adding the
+    function back as a thin wrapper avoids pinning either side of the stack.
+
+    Call this before importing brax. Idempotent.
+    """
+    import jax
+
+    # Probe whether the symbol works (a deprecation stub raises on access).
+    has_working = False
+    try:
+        if hasattr(jax, "device_put_replicated") and callable(
+            getattr(jax, "device_put_replicated", None)
+        ):
+            has_working = True
+    except AttributeError:
+        has_working = False
+    if has_working:
+        return
+
+    def _device_put_replicated(x, devices):
+        from jax.sharding import PositionalSharding
+
+        sharding = PositionalSharding(devices)
+
+        def _put(leaf):
+            arr = jax.numpy.asarray(leaf)
+            # Replicate along a new leading device axis.
+            replicated = jax.numpy.broadcast_to(arr, (len(devices), *arr.shape))
+            target_sharding = sharding.reshape((-1,) + (1,) * arr.ndim)
+            return jax.device_put(replicated, target_sharding)
+
+        return jax.tree_util.tree_map(_put, x)
+
+    jax.device_put_replicated = _device_put_replicated
+
+
 def train(cfg: AMPTrainConfig) -> None:
     import jax
     import jax.numpy as jnp
@@ -135,16 +175,14 @@ def train(cfg: AMPTrainConfig) -> None:
                   f"loss={float(loss):.4f} gp={float(aux['grad_penalty']):.4f}")
 
     # --- 6. PPO training via brax ---
+    _shim_jax_for_brax()
     from brax.training.agents.ppo import networks as ppo_networks
     from brax.training.agents.ppo import train as brax_ppo
-
-    # mujoco_playground envs return State objects with a different attribute
-    # shape than brax's wrappers expect. wrap_for_brax_training translates,
-    # AND vmaps internally. brax's default wrap_env path ALSO vmaps -- so
-    # without wrap_env=False we double-vmap and the PRNG key collapses
-    # to ndim=0 inside the inner vmap.
     from mujoco_playground import wrapper as mjx_wrapper
 
+    # mujoco_playground envs return State with a different shape than brax
+    # expects; wrap_for_brax_training translates AND vmaps. Pass wrap_env=False
+    # to brax_ppo.train so brax doesn't double-vmap on top.
     env = mjx_wrapper.wrap_for_brax_training(
         env,
         episode_length=int(cfg.episode_length_s * 50),
