@@ -1,29 +1,24 @@
 <!--
   Go2 MJX scene, feet-only collisions, flat terrain.
 
-  Mirrors the structure of mujoco_playground's Go1
-  scene_mjx_feetonly_flat_terrain.xml, but pulls in menagerie's
-  unitree_go2 robot definition.
+  Mirrors mujoco_playground's Go1 scene_mjx_feetonly_flat_terrain.xml,
+  but pulls in menagerie's unitree_go2 robot definition.
 
-  Sensor strategy:
-    menagerie's go2_mjx.xml ALREADY declares the standard body-frame
-    sensors (gyro, local_linvel, accelerometer, etc.) anchored to the
-    "imu" site. Re-declaring them here raises "repeated name". So this
-    file only adds per-foot framelinvel/framepos (Go1's reward code
-    expects them, menagerie does not ship them) and floor-contact
-    sensors via sensor_feet.xml.
+  What we DON'T re-declare (menagerie's go2_mjx.xml already provides):
+    body-frame sensors (gyro, local_linvel, accelerometer, position,
+    upvector, forwardvector, global_linvel, global_angvel, orientation)
+    AND the "home" keyframe with the symmetric-hip standing pose.
+  Re-declaring any of those raises an "XML Error: repeated name" at
+  compile time. If menagerie's XML stops shipping one of them, the
+  failure mode flips to a sensor-not-found at reset/step time, and we
+  add the missing piece back here.
 
-    If menagerie's go2_mjx.xml is missing one of the standard sensors
-    Go1 expects (gyro, local_linvel, accelerometer, upvector,
-    forwardvector, global_linvel, global_angvel, position, orientation),
-    the symptom is a sensor-not-found error during reset or step, not
-    at compile time, and we add the specific missing sensor back here.
+  What we DO add: per-foot framelinvel/framepos sensors (menagerie does
+  not ship these; Go1's reward code expects them), the floor geom, and
+  floor-contact sensors via sensor_feet.xml.
 
   Foot site names FL_foot/FR_foot/RL_foot/RR_foot match menagerie's
   go2_mjx.xml; foot geom names FL/FR/RL/RR also match.
-
-  Home keyframe uses Go2's symmetric-hip pose (0 0.9 -1.8 per leg) and
-  base height 0.27 m.
 -->
 <mujoco model="go2_feetonly_flat_terrain">
   <include file="go2_mjx.xml"/>
@@ -53,8 +48,6 @@
   </worldbody>
 
   <sensor>
-    <!-- Per-foot kinematics. menagerie provides body-frame sensors but
-         not these. Site names match menagerie's foot sites. -->
     <framelinvel name="FR_global_linvel" objtype="site" objname="FR_foot"/>
     <framelinvel name="FL_global_linvel" objtype="site" objname="FL_foot"/>
     <framelinvel name="RR_global_linvel" objtype="site" objname="RR_foot"/>
@@ -66,12 +59,4 @@
   </sensor>
 
   <include file="sensor_feet.xml"/>
-
-  <keyframe>
-    <!-- 19 elements: 7 root (xyz + quat) + 12 joints (hip, thigh, calf
-         per leg, in menagerie's joint declaration order). -->
-    <key name="home"
-         qpos="0 0 0.27 1 0 0 0 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8"
-         ctrl="0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8"/>
-  </keyframe>
 </mujoco>
