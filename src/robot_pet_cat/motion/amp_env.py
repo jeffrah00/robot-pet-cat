@@ -1,15 +1,4 @@
-"""Env wrapper for AMP training over Go2 locomotion.
-
-We don't augment the reward inside env.step() because the discriminator's
-parameters change every training iteration and threading them through the
-env's functional state is awkward. Instead, the env returns vanilla
-mujoco_playground rollouts; the trainer computes the AMP style reward
-afterwards in a separate JAX-jitted function and adds it to the task reward
-before the PPO update.
-
-This keeps the env definition clean and decouples the AMP machinery from
-the underlying RL infrastructure.
-"""
+"""Env wrapper for AMP training over Go2 locomotion."""
 
 from __future__ import annotations
 
@@ -33,11 +22,11 @@ def _resolve_joystick_default_config():
     """Get the Joystick default config without instantiating an env.
 
     Playground exposes default_config as a module-level function in the
-    joystick module, not as an instance/class method on Joystick. The
-    previous `env.default_config()` call worked in older playground
-    versions but raises AttributeError on current installs.
+    joystick module, not as an instance method on Joystick. The previous
+    env.default_config() call worked in older playground versions but
+    raises AttributeError on current installs.
     """
-    import importlib  # noqa: PLC0415
+    import importlib
 
     for mod_name in (
         "mujoco_playground._src.locomotion.go1.joystick",
@@ -56,32 +45,34 @@ def _resolve_joystick_default_config():
 def make_env(cfg: AMPEnvConfig):
     """Construct the underlying mujoco_playground env.
 
-    Lazy import so this file is parseable on machines without the heavy
-    [motion] extras installed. If the named env doesn't exist (the registry's
-    naming convention has drifted between versions), the error message lists
-    every available env so the user can fix the config without grepping.
-
-    We unconditionally import robot_pet_cat.motion.go2_env first so the Go2
-    Joystick env gets registered before any registry lookup. mujoco_playground
-    only ships Go1 envs out of the box.
+    Resolves default config externally rather than via env.default_config()
+    (which raises AttributeError on current playground). Casts numeric
+    overrides through int() because the default config is an
+    ml_collections.ConfigDict and its fields are type-locked:
+      - episode_length is an INT number of physics steps (not seconds).
+        Go2 joystick env runs at 50 Hz, so multiply seconds by 50.
+      - action_repeat is also INT.
     """
-    from robot_pet_cat.motion import go2_env  # noqa: F401, PLC0415  # side-effect: registers Go2
+    from robot_pet_cat.motion import go2_env  # noqa: F401  # registers Go2
 
-    from mujoco_playground import registry  # noqa: PLC0415
+    from mujoco_playground import registry
 
     available = sorted(registry.ALL_ENVS) if hasattr(registry, "ALL_ENVS") else []
 
-    # Resolve default config externally rather than via env.default_config(),
-    # which raises AttributeError on current playground versions.
     env_cfg = _resolve_joystick_default_config()
     if env_cfg is not None:
         if hasattr(env_cfg, "episode_length"):
-            env_cfg.episode_length = cfg.episode_length_s
+            try:
+                env_cfg.episode_length = int(cfg.episode_length_s * 50)
+            except (AttributeError, TypeError):
+                pass
         if hasattr(env_cfg, "action_repeat"):
-            env_cfg.action_repeat = cfg.action_repeat
-        # Force JAX backend here too -- our go2 wrapper does it on the inner
-        # Joystick instantiation, but if registry.load(name, config) honors
-        # this config without going through our wrapper's path we want jax.
+            try:
+                env_cfg.action_repeat = int(cfg.action_repeat)
+            except (AttributeError, TypeError):
+                pass
+        # Force JAX backend so we dodge the mujoco/warp ABI mismatch in
+        # mjx.put_model.
         if hasattr(env_cfg, "impl"):
             try:
                 env_cfg.impl = "jax"
@@ -112,13 +103,7 @@ def extract_amp_features(
     qvel: jnp.ndarray | None,
     use_qvel: bool,
 ) -> jnp.ndarray:
-    """Return the per-state feature vector D consumes.
-
-    AMP's discriminator works on a feature representation of the state, not
-    the full observation. We use the robot's joint positions (and optionally
-    velocities), not the policy observation, because that's what AMP cares
-    about stylistically.
-    """
+    """Per-state feature vector D consumes (qpos, optionally + qvel)."""
     if use_qvel:
         if qvel is None:
             raise ValueError("use_qvel=True but qvel was None")
@@ -131,11 +116,7 @@ def build_transitions_for_amp(
     qvel_traj: jnp.ndarray | None,
     use_qvel: bool,
 ) -> jnp.ndarray:
-    """Build (B, 2 * feat_dim) AMP transition features from a rollout.
-
-    Inputs are rollouts of shape (T, B, dim). Output is a flat batch of
-    (T-1) * B transitions ready for the discriminator.
-    """
+    """Build (B, 2 * feat_dim) AMP transition features from a (T, B, dim) rollout."""
     feats = extract_amp_features(qpos_traj, qvel_traj, use_qvel)
     s_t = feats[:-1]
     s_tp1 = feats[1:]
