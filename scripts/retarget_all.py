@@ -31,7 +31,8 @@ def _load_manifest(path: Path) -> list[dict]:
 
 
 def _run_pose_extraction(mp4_path: Path, keypoints_path: Path) -> tuple[bool, str]:
-    """Invoke DLC via the dlc conda env (extract_keypoints.py runs SuperAnimal)."""
+    """Invoke DLC via the dlc conda env. extract_keypoints.py takes the
+    video as a positional argument plus --out for the json output."""
     if shutil.which("micromamba"):
         runner = ["micromamba", "run", "-n", "dlc"]
     elif shutil.which("conda"):
@@ -41,7 +42,7 @@ def _run_pose_extraction(mp4_path: Path, keypoints_path: Path) -> tuple[bool, st
 
     cmd = runner + [
         "python", "scripts/extract_keypoints.py",
-        "--video", str(mp4_path),
+        str(mp4_path),
         "--out", str(keypoints_path),
     ]
     try:
