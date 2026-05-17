@@ -1,7 +1,7 @@
 """AMP trainer for cat-style Go2 locomotion.
 
 Composes:
-  - mujoco_playground's Go2JoystickFlatTerrain as the env
+  - mujoco_playground's Go1JoystickFlatTerrain as the env
   - brax PPO networks + losses (policy and value MLPs)
   - Our AMPDiscriminator for the style reward
   - Our ReferenceBuffer for "real" cat transitions
@@ -64,7 +64,7 @@ class AMPTrainConfig:
     disc_updates_per_iter: int = 1
 
     # Env
-    env_name: str = "Go2JoystickFlatTerrain"
+    env_name: str = "Go1JoystickFlatTerrain"
     num_envs: int = 4096
     episode_length_s: float = 20.0
 

@@ -21,7 +21,7 @@ import jax.numpy as jnp
 
 @dataclass
 class AMPEnvConfig:
-    base_env_name: str = "Go2JoystickFlatTerrain"
+    base_env_name: str = "Go1JoystickFlatTerrain"
     num_envs: int = 4096
     episode_length_s: float = 20.0
     action_repeat: int = 1
