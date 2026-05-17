@@ -1,22 +1,21 @@
 <!--
   Go2 MJX scene, feet-only collisions, flat terrain.
 
-  Naming invariant Go1's joystick task relies on:
-    Per-foot sensors must be named "{foot_site_name}_{kind}", because Go1
-    builds the sensor name on the fly:
-        sensor_name = f"{site}_global_linvel"
-    with site coming from FEET_SITES. Our FEET_SITES is
-    ["FR_foot","FL_foot","RR_foot","RL_foot"] (menagerie's foot site
-    names), so our sensors must be FR_foot_global_linvel, FR_foot_pos,
-    FR_foot_floor_found, etc.
+  Sensor inventory after observing what menagerie's go2_mjx.xml actually
+  provides vs what Go1's task code expects:
 
-  We do NOT re-declare anything menagerie's go2_mjx.xml already provides:
-    body-frame sensors (gyro, local_linvel, accelerometer, etc.) and the
-    "home" keyframe.
+    Provided by menagerie : accelerometer, gyro, global_linvel,
+                            global_angvel, global_position, orientation.
+    Missing in menagerie  : local_linvel, upvector, forwardvector,
+                            position. We add these below.
+    Per-foot, we add      : framelinvel and framepos on each foot site,
+                            plus floor-contact sensors via sensor_feet.xml.
 
-  Foot geom names FL/FR/RL/RR match menagerie and match Go1's FEET_GEOMS,
-  so the floor-contact sensors in sensor_feet.xml only need renaming on
-  the sensor name side, not on the geom side.
+  Naming invariant: per-foot sensors must be named {foot_site_name}_{kind}
+  because Go1 builds names at runtime as f"{site}_global_linvel".
+
+  We do NOT re-declare anything menagerie already provides (which raises
+  "XML Error: repeated name") and we do NOT re-declare the "home" keyframe.
 -->
 <mujoco model="go2_feetonly_flat_terrain">
   <include file="go2_mjx.xml"/>
@@ -46,6 +45,11 @@
   </worldbody>
 
   <sensor>
+    <velocimeter name="local_linvel"    site="imu"/>
+    <framezaxis  name="upvector"        objtype="site" objname="imu"/>
+    <framexaxis  name="forwardvector"   objtype="site" objname="imu"/>
+    <framepos    name="position"        objtype="site" objname="imu"/>
+
     <framelinvel name="FR_foot_global_linvel" objtype="site" objname="FR_foot"/>
     <framelinvel name="FL_foot_global_linvel" objtype="site" objname="FL_foot"/>
     <framelinvel name="RR_foot_global_linvel" objtype="site" objname="RR_foot"/>
