@@ -142,6 +142,18 @@ def train(cfg: AMPTrainConfigV2) -> None:
     policy_params = ppo_nets.policy_network.init(k_policy)
     value_params = ppo_nets.value_network.init(k_value)
 
+    # brax's policy_network.apply signature is (normalizer_params, params, obs).
+    # We track running obs statistics so the policy sees normalized inputs --
+    # same as what brax PPO does internally.
+    from brax.training.acme import running_statistics, specs
+    dummy_obs = jax.tree_util.tree_map(
+        lambda x: jnp.zeros((x,) if isinstance(x, int) else x),
+        env.observation_size,
+    )
+    normalizer_params = running_statistics.init_state(
+        specs.Array(jnp.shape(dummy_obs), jnp.float32)
+    )
+
     optimizer = optax.chain(
         optax.clip_by_global_norm(cfg.ppo.max_grad_norm),
         optax.adam(cfg.ppo.learning_rate),
@@ -192,23 +204,22 @@ def train(cfg: AMPTrainConfigV2) -> None:
 
     # Rollout: vmap'd env.step + policy. Returns transitions including the
     # qpos history we need for AMP style reward.
-    def policy_act(params, obs, rng):
-        # ppo_nets.policy_network applies normalizer + MLP and returns
-        # (mean, std) parameters of a tanh-squashed normal in raw_action space.
-        logits = ppo_nets.policy_network.apply(params, obs)
-        # Use brax's parametric_action_distribution for sampling / log prob.
+    def policy_act(norm_params, params, obs, rng):
+        # ppo_nets.policy_network.apply takes (normalizer_params, params, obs)
+        # and returns (mean, std) parameters of a tanh-squashed normal.
+        logits = ppo_nets.policy_network.apply(norm_params, params, obs)
         dist = ppo_nets.parametric_action_distribution
         raw_act = dist.sample_no_postprocessing(logits, rng)
         log_prob = dist.log_prob(logits, raw_act)
         act = dist.postprocess(raw_act)
         return act, log_prob, raw_act
 
-    def value_predict(value_params, obs):
-        v = ppo_nets.value_network.apply(value_params, obs)
+    def value_predict(norm_params, value_params, obs):
+        v = ppo_nets.value_network.apply(norm_params, value_params, obs)
         return jnp.squeeze(v, axis=-1) if v.ndim > 1 else v
 
     @functools.partial(jax.jit, static_argnames=("unroll_length",))
-    def rollout(env_state, policy_params, value_params, d_params, rng,
+    def rollout(env_state, norm_params, policy_params, value_params, d_params, rng,
                 unroll_length: int):
         """Roll out `unroll_length` steps in parallel envs. Returns dict of
         per-step arrays of shape (T, num_envs, ...) plus the final env_state
@@ -217,9 +228,9 @@ def train(cfg: AMPTrainConfigV2) -> None:
             env_state, rng = carry
             rng, k_act = jax.random.split(rng)
             act, log_prob, raw_act = policy_act(
-                policy_params, env_state.obs, k_act,
+                norm_params, policy_params, env_state.obs, k_act,
             )
-            v = value_predict(value_params, env_state.obs)
+            v = value_predict(norm_params, value_params, env_state.obs)
             qpos_before = env_state.pipeline_state.qpos
             next_env_state = env.step(env_state, act)
             qpos_after = next_env_state.pipeline_state.qpos
@@ -256,7 +267,7 @@ def train(cfg: AMPTrainConfigV2) -> None:
             step_fn, (env_state, rng), None, length=unroll_length,
         )
         # Bootstrap value for GAE.
-        last_v = value_predict(value_params, final_env_state.obs)
+        last_v = value_predict(norm_params, value_params, final_env_state.obs)
         return final_env_state, final_rng, traj, last_v
 
     @jax.jit
@@ -281,11 +292,11 @@ def train(cfg: AMPTrainConfigV2) -> None:
         return advs, returns
 
     @jax.jit
-    def ppo_update(policy_params, value_params, opt_state,
+    def ppo_update(norm_params, policy_params, value_params, opt_state,
                    obs, act, log_prob_old, raw_act, advs, returns):
         def loss_fn(params):
             p_params, v_params = params
-            logits = ppo_nets.policy_network.apply(p_params, obs)
+            logits = ppo_nets.policy_network.apply(norm_params, p_params, obs)
             dist = ppo_nets.parametric_action_distribution
             log_prob = dist.log_prob(logits, raw_act)
             entropy = dist.entropy(logits, jax.random.PRNGKey(0)).mean()
@@ -300,7 +311,7 @@ def train(cfg: AMPTrainConfigV2) -> None:
             ) * adv_norm
             policy_loss = -jnp.minimum(unclipped, clipped).mean()
 
-            v_pred = ppo_nets.value_network.apply(v_params, obs)
+            v_pred = ppo_nets.value_network.apply(norm_params, v_params, obs)
             if v_pred.ndim > 1:
                 v_pred = jnp.squeeze(v_pred, axis=-1)
             value_loss = 0.5 * ((v_pred - returns) ** 2).mean()
@@ -341,7 +352,7 @@ def train(cfg: AMPTrainConfigV2) -> None:
     for it in range(cfg.ppo.total_iterations):
         rng, k_roll = jax.random.split(rng)
         env_state, _, traj, last_v = rollout(
-            env_state, policy_params, value_params, disc_params, k_roll,
+            env_state, normalizer_params, policy_params, value_params, disc_params, k_roll,
             unroll_length=cfg.ppo.unroll_length,
         )
 
@@ -368,7 +379,7 @@ def train(cfg: AMPTrainConfigV2) -> None:
                 idx = perm[mb * mb_size:(mb + 1) * mb_size]
                 policy_params, value_params, opt_state, ppo_loss, ppo_aux = (
                     ppo_update(
-                        policy_params, value_params, opt_state,
+                        normalizer_params, policy_params, value_params, opt_state,
                         obs_flat[idx], act_flat[idx], log_prob_flat[idx],
                         raw_act_flat[idx], advs_flat[idx], returns_flat[idx],
                     )
@@ -393,6 +404,12 @@ def train(cfg: AMPTrainConfigV2) -> None:
                 disc_params, disc_opt_state, real_b, fake_b,
             )
 
+        # Update running normalizer with the new batch of observations so
+        # next iteration's policy sees properly-scaled inputs.
+        normalizer_params = running_statistics.update(
+            normalizer_params, obs_flat,
+        )
+
         total_env_steps += cfg.num_envs * cfg.ppo.unroll_length
         if (it + 1) % cfg.log_interval_iters == 0:
             wall = time.time() - start
@@ -409,21 +426,25 @@ def train(cfg: AMPTrainConfigV2) -> None:
 
         if (it + 1) % cfg.checkpoint_interval_iters == 0:
             _save_ckpt(cfg.checkpoint_dir, it + 1,
-                       policy_params, value_params, disc_params)
+                       policy_params, value_params, disc_params,
+                       normalizer_params=normalizer_params)
 
     _save_ckpt(cfg.checkpoint_dir, cfg.ppo.total_iterations,
-               policy_params, value_params, disc_params)
+               policy_params, value_params, disc_params,
+               normalizer_params=normalizer_params)
     print(f"[amp-v2] done in {(time.time() - start) / 60:.1f} min")
 
 
-def _save_ckpt(out_dir: Path, it: int, policy_params, value_params, disc_params):
+def _save_ckpt(out_dir: Path, it: int, policy_params, value_params, disc_params,
+               normalizer_params=None):
     import pickle
     out_dir.mkdir(parents=True, exist_ok=True)
     p = out_dir / f"amp_v2_it{it:06d}.pkl"
     with p.open("wb") as f:
         pickle.dump(
             {"policy": policy_params, "value": value_params,
-             "disc": disc_params, "iteration": it}, f,
+             "disc": disc_params, "normalizer": normalizer_params,
+             "iteration": it}, f,
         )
     # Also write/overwrite a 'latest' alias.
     latest = out_dir / "amp_v2_latest.pkl"
