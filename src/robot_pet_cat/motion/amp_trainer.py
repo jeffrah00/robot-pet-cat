@@ -64,7 +64,7 @@ class AMPTrainConfig:
     disc_updates_per_iter: int = 1
 
     # Env
-    env_name: str = "Go1JoystickFlatTerrain"
+    env_name: str = "Go2JoystickFlatTerrain"
     num_envs: int = 4096
     episode_length_s: float = 20.0
 

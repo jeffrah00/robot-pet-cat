@@ -1,0 +1,90 @@
+<!--
+  Go2 MJX scene, feet-only collisions, flat terrain.
+
+  Mirrors the structure of mujoco_playground's Go1
+  scene_mjx_feetonly_flat_terrain.xml, but pulls in mujoco_menagerie's
+  unitree_go2 robot definition instead of unitree_go1.
+
+  Key differences from Go1:
+    - Includes ../mujoco_menagerie/unitree_go2/go2_mjx.xml (NOT go1_mjx.xml).
+      The actual file path resolution happens via Go2Env.get_assets(); the
+      string here is just a placeholder mujoco can't see anyway because we
+      hand it raw XML strings via from_xml_string().
+    - Home keyframe uses Go2's symmetric-hip pose (0 0.9 -1.8 per leg) and
+      base height 0.27 m, vs Go1's (+/-0.1 0.9 -1.8) and 0.278 m.
+    - Foot site names are FL_foot/FR_foot/RL_foot/RR_foot as shipped by
+      menagerie; the sensor block below references those names. Code that
+      looks up sites by name comes from go2_constants.FEET_SITES so the
+      naming difference is contained.
+    - Foot geom names (FL/FR/RL/RR) happen to match Go1, so sensor_feet.xml
+      is reusable verbatim.
+
+  The sensor block is copied from Go1's scene XML and only the foot-site
+  references are renamed (FR -> FR_foot, etc.).
+-->
+<mujoco model="go2_feetonly_flat_terrain">
+  <include file="go2_mjx.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize=".05"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0"
+             width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge"
+             rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8"
+             width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true"
+              texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"
+          condim="3" friction="0.6"/>
+  </worldbody>
+
+  <sensor>
+    <!-- Body-frame IMU-like sensors, all anchored to the "imu" site. -->
+    <gyro          name="gyro"          site="imu"/>
+    <velocimeter   name="local_linvel"  site="imu"/>
+    <accelerometer name="accelerometer" site="imu"/>
+
+    <!-- World-frame state, anchored to the "imu" site as well. -->
+    <framepos     name="position"       objtype="site" objname="imu"/>
+    <framezaxis   name="upvector"       objtype="site" objname="imu"/>
+    <framexaxis   name="forwardvector"  objtype="site" objname="imu"/>
+    <framelinvel  name="global_linvel"  objtype="site" objname="imu"/>
+    <frameangvel  name="global_angvel"  objtype="site" objname="imu"/>
+    <framequat    name="orientation"    objtype="site" objname="imu"/>
+
+    <!-- Per-foot kinematics. Site names match menagerie's go2_mjx.xml. -->
+    <framelinvel  name="FR_global_linvel" objtype="site" objname="FR_foot"/>
+    <framelinvel  name="FL_global_linvel" objtype="site" objname="FL_foot"/>
+    <framelinvel  name="RR_global_linvel" objtype="site" objname="RR_foot"/>
+    <framelinvel  name="RL_global_linvel" objtype="site" objname="RL_foot"/>
+    <framepos     name="FR_pos"           objtype="site" objname="FR_foot"/>
+    <framepos     name="FL_pos"           objtype="site" objname="FL_foot"/>
+    <framepos     name="RR_pos"           objtype="site" objname="RR_foot"/>
+    <framepos     name="RL_pos"           objtype="site" objname="RL_foot"/>
+  </sensor>
+
+  <include file="sensor_feet.xml"/>
+
+  <keyframe>
+    <!-- 19 elements: 7 root (xyz + quat) + 12 joints (hip, thigh, calf x 4
+         legs in order FL, FR, RL, RR matching menagerie's joint declaration
+         order). Base height 0.27 m and symmetric hips match Go2's standing
+         home pose; the slight Go1 differences (+/-0.1 hips, 0.278 height)
+         do not transfer cleanly because Go2 has slightly different leg
+         geometry. -->
+    <key name="home"
+         qpos="0 0 0.27 1 0 0 0 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8"
+         ctrl="0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8"/>
+  </keyframe>
+</mujoco>

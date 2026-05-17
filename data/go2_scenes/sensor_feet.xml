@@ -1,0 +1,16 @@
+<!--
+  Per-foot contact sensors for the Go2 MJX scene. Mirrors mujoco_playground's
+  Go1 sensor_feet.xml. The geom names (FR/FL/RR/RL) and the "floor" geom name
+  must match what's defined in scene_mjx_feetonly_flat_terrain.xml.
+
+  A "touch"-style sensor is non-differentiable; using a contact sensor with
+  num=1 lets the reward functions read a clean 0/1 floor-contact signal.
+-->
+<mujoco>
+  <sensor>
+    <contact name="FR_floor_found" geom1="FR" geom2="floor" num="1"/>
+    <contact name="FL_floor_found" geom1="FL" geom2="floor" num="1"/>
+    <contact name="RR_floor_found" geom1="RR" geom2="floor" num="1"/>
+    <contact name="RL_floor_found" geom1="RL" geom2="floor" num="1"/>
+  </sensor>
+</mujoco>

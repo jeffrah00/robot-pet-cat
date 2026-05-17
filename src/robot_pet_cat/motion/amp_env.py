@@ -21,7 +21,7 @@ import jax.numpy as jnp
 
 @dataclass
 class AMPEnvConfig:
-    base_env_name: str = "Go1JoystickFlatTerrain"
+    base_env_name: str = "Go2JoystickFlatTerrain"
     num_envs: int = 4096
     episode_length_s: float = 20.0
     action_repeat: int = 1
@@ -36,7 +36,13 @@ def make_env(cfg: AMPEnvConfig):
     [motion] extras installed. If the named env doesn't exist (the registry's
     naming convention has drifted between versions), the error message lists
     every available env so the user can fix the config without grepping.
+
+    We unconditionally import robot_pet_cat.motion.go2_env first so the Go2
+    Joystick env gets registered before any registry lookup. mujoco_playground
+    only ships Go1 envs out of the box; importing go2_env adds Go2 variants.
     """
+    from robot_pet_cat.motion import go2_env  # noqa: F401, PLC0415  # side-effect: registers Go2
+
     from mujoco_playground import registry  # noqa: PLC0415
 
     available = sorted(registry.ALL_ENVS) if hasattr(registry, "ALL_ENVS") else []
@@ -46,7 +52,8 @@ def make_env(cfg: AMPEnvConfig):
         go2 = [n for n in available if "go2" in n.lower()]
         msg_lines = [
             f"Failed to load env {cfg.base_env_name!r}.",
-            "Likely a naming-convention mismatch with this mujoco_playground version.",
+            "Likely a naming-convention mismatch with this mujoco_playground version,",
+            "or robot_pet_cat.motion.go2_env failed to register the Go2 env.",
             f"All envs ({len(available)}): {available}",
             f"Go2 envs: {go2}",
             f"Underlying error: {e}",

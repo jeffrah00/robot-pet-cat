@@ -16,7 +16,7 @@ disc_batch_size: 4096
 disc_updates_per_iter: 1
 
 # --- Env -------------------------------------------------------------------
-env_name: Go1JoystickFlatTerrain
+env_name: Go2JoystickFlatTerrain
 num_envs: 4096
 episode_length_s: 20.0
 
