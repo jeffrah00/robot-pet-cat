@@ -339,9 +339,9 @@ def train(cfg: ImitationTrainConfig) -> None:
             rng, k_act = jax.random.split(rng)
             # Sanitize obs before network calls -- NaN obs from physics explosions
             # produce NaN logits, log_probs, and values that corrupt the PPO loss.
-            safe_obs = jnp.where(
-                jnp.isfinite(env_state.obs), env_state.obs,
-                jnp.zeros_like(env_state.obs)
+            safe_obs = jax.tree_util.tree_map(
+                lambda x: jnp.where(jnp.isfinite(x), x, jnp.zeros_like(x)),
+                env_state.obs
             )
             act, log_prob, raw_act = _policy_act(norm_params, policy_params,
                                                  safe_obs, k_act)
@@ -413,7 +413,9 @@ def train(cfg: ImitationTrainConfig) -> None:
                    obs, act, log_prob_old, raw_act, advs, returns):
         # Sanitize before loss_fn closes over these -- NaN obs/log_probs from
         # physics explosions produce NaN logits and ratios, corrupting PPO loss.
-        obs          = jnp.where(jnp.isfinite(obs),          obs,          jnp.zeros_like(obs))
+        obs          = jax.tree_util.tree_map(
+            lambda x: jnp.where(jnp.isfinite(x), x, jnp.zeros_like(x)), obs
+        )
         log_prob_old = jnp.where(jnp.isfinite(log_prob_old), log_prob_old, jnp.zeros_like(log_prob_old))
         advs         = jnp.where(jnp.isfinite(advs),         advs,         jnp.zeros_like(advs))
         returns      = jnp.where(jnp.isfinite(returns),      returns,      jnp.zeros_like(returns))
@@ -494,5 +496,4 @@ def train(cfg: ImitationTrainConfig) -> None:
         n = jax.tree_util.tree_leaves(obs_flat)[0].shape[0]
         mb_size = n // cfg.ppo.num_minibatches
 
-        for _epoch in range(cfg.ppo.num_updates_per_batch):
-            rng, k_perm = jax.random.split(rng
+        for _epoch in range(cfg.ppo.num_updates_per_batc
