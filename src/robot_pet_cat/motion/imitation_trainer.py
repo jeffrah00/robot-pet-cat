@@ -404,6 +404,11 @@ def train(cfg: ImitationTrainConfig) -> None:
     @jax.jit
     def ppo_update(norm_params, policy_params, value_params, opt_state,
                    obs, act, log_prob_old, raw_act, advs, returns):
+        # Sanitize before loss_fn closes over advs/returns -- reassigning inside
+        # loss_fn makes Python treat them as unbound locals (UnboundLocalError).
+        advs    = jnp.where(jnp.isfinite(advs),    advs,    jnp.zeros_like(advs))
+        returns = jnp.where(jnp.isfinite(returns), returns, jnp.zeros_like(returns))
+
         def loss_fn(params):
             p_params, v_params = params
             logits = ppo_nets.policy_network.apply(norm_params, p_params, obs)
@@ -411,7 +416,6 @@ def train(cfg: ImitationTrainConfig) -> None:
             log_prob = dist.log_prob(logits, raw_act)
             entropy  = dist.entropy(logits, jax.random.PRNGKey(0)).mean()
             ratio    = jnp.exp(log_prob - log_prob_old)
-            advs = jnp.where(jnp.isfinite(advs), advs, jnp.zeros_like(advs))
             adv_norm = (advs - advs.mean()) / (advs.std() + 1e-8)
             unclipped = ratio * adv_norm
             clipped = jnp.clip(ratio,
@@ -494,10 +498,4 @@ def train(cfg: ImitationTrainConfig) -> None:
                 )
 
         # Update running obs normalizer.
-        normalizer_params = running_statistics.update(normalizer_params, obs_flat)
-
-        # RSI for next rollout: reseed rsi_prob fraction of envs.
-        env_state = _do_rsi(env_state)
-
-        total_env_steps += cfg.num_envs * cfg.ppo.unroll_length
-       
+        
