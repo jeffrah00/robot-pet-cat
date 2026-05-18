@@ -1,0 +1,59 @@
+# Phase 1 kinematic imitation config for Go2 cat locomotion.
+# Consumed by `rpc train-motion-imitation --config configs/motion/cat_imitation_v1.yaml`.
+# Maps onto src/robot_pet_cat/motion/imitation_trainer.py:ImitationTrainConfig.
+#
+# Why imitation instead of AMP:
+#   AMP train_v3/v4 showed r_task plateauing at +0.016 after 500+ warmup iters.
+#   The AMP style reward (scale ~0.16) dominated the task reward (scale ~0.016)
+#   5:1, and without RSI the policy could never experience mid-gait states.
+#   Kinematic imitation gives a dense reward from step 1, and RSI seeds 80% of
+#   envs from reference frames at each rollout start.
+
+# --- Reference clips ---------------------------------------------------------
+# Locomotion-only (no lying/grooming): 10 clips, 3074 frames.
+motion_clips_dir: data/motion_clips_loco
+
+# --- Reward ------------------------------------------------------------------
+# Both rewards are in roughly [0, 1].  Equal weights to start; task reward
+# will grow naturally as the policy learns to walk and track velocity.
+task_reward_weight: 1.0
+imitation_reward_weight: 1.0
+
+# Gaussian sharpness for pose-matching reward.
+# exp(-||q_joints||^2 / sigma_sq):
+#   sigma_sq=0.5 -> r~0.79 at 0.1 rad avg error (12 joints)
+#                   r~0.38 at 0.2 rad
+#                   r~0.00 at 0.5 rad
+imitation_sigma_sq: 0.5
+
+# --- RSI ---------------------------------------------------------------------
+# Fraction of envs to seed from a random reference frame at each rollout start.
+# 0.8 is aggressive but necessary for cold-start training.
+rsi_prob: 0.8
+
+# --- Env ---------------------------------------------------------------------
+env_name: Go2JoystickFlatTerrain
+num_envs: 4096
+episode_length_s: 20.0
+
+# --- PPO ---------------------------------------------------------------------
+ppo:
+  total_iterations: 3000
+  unroll_length: 20
+  num_minibatches: 32
+  num_updates_per_batch: 4
+  discounting: 0.97
+  gae_lambda: 0.95
+  clipping_epsilon: 0.2
+  entropy_cost: 0.01
+  learning_rate: 0.0003
+  max_grad_norm: 1.0
+  policy_hidden_sizes: [512, 256, 128]
+  value_hidden_sizes:  [512, 256, 128]
+
+# --- Run-level ---------------------------------------------------------------
+seed: 0
+log_interval_iters: 10
+eval_interval_iters: 100
+checkpoint_interval_iters: 500
+checkpoint_dir: checkpoints/motion_imitation_v1

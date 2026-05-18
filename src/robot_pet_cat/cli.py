@@ -36,6 +36,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     tmotion_v2.add_argument("--config", required=True)
 
+    tmotion_imit = sub.add_parser(
+        "train-motion-imitation",
+        help="Tier 1 Phase 1: kinematic imitation + RSI (no discriminator).",
+    )
+    tmotion_imit.add_argument("--config", required=True)
+
     tskill = sub.add_parser(
         "train-skill", help="Tier 2: a single skill (walk_to, sit, jump_to, swat, ...).",
     )
@@ -103,31 +109,17 @@ def main(argv: list[str] | None = None) -> int:
         train_v2(cfg)
         return 0
 
-    if args.cmd == "train-skill":
-        print(f"[stub] would train skill {args.skill} (config={args.config})")
-        return 0
-
-    if args.cmd == "train-brain":
-        print(f"[stub] would train brain with {args.config}")
-        return 0
-
-    if args.cmd == "retarget":
+    if args.cmd == "train-motion-imitation":
         from pathlib import Path
-        from robot_pet_cat.retargeting import process_directory
-
-        written = process_directory(Path(args.clips), Path(args.out))
-        if not written:
-            print(f"No .json keypoint files found in {args.clips}")
-            return 1
-        for p in written:
-            print(f"wrote {p}")
-        return 0
-
-    if args.cmd == "demo":
-        print("[stub] would spawn cat in living room and run for 60 seconds")
-        return 0
-    return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+        import yaml
+        from robot_pet_cat.motion.imitation_trainer import (
+            ImitationTrainConfig, PPOConfig as PPOConfigImit, train as train_imit,
+        )
+        with open(args.config) as f:
+            raw = yaml.safe_load(f)
+        ppo_kwargs = raw.pop("ppo", {})
+        for k in ("motion_clips_dir", "checkpoint_dir"):
+            if k in raw and raw[k] is not None:
+                raw[k] = Path(raw[k])
+        cfg = ImitationTrainConfig(ppo=PPOConfigImit(**ppo_kwargs), **raw)
+        train_imit(cfg)
