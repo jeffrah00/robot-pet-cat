@@ -248,8 +248,7 @@ def train(cfg: ImitationTrainConfig) -> None:
         '''Replace qpos/qvel for envs where rsi_mask=True.
         Works on mjx.Data and brax State objects that expose .replace().
         '''
-        _ps_attr = "pipeline_state" if hasattr(env_state, "pipeline_state") else "data"
-        ps = getattr(env_state, _ps_attr)
+        ps = env_state.pipeline_state
         nq_env = ps.qpos.shape[-1]
         nv_env = ps.qvel.shape[-1]
         # Clip reference arrays to env dims in case of shape mismatch.
@@ -258,7 +257,7 @@ def train(cfg: ImitationTrainConfig) -> None:
         new_qpos = jnp.where(rsi_mask_j[:, None], rq, ps.qpos)
         new_qvel = jnp.where(rsi_mask_j[:, None], rv, ps.qvel)
         new_ps = ps.replace(qpos=new_qpos, qvel=new_qvel)
-        return env_state.replace(**{_ps_attr: new_ps})
+        return env_state.replace(pipeline_state=new_ps)
 
     def _do_rsi(env_state):
         '''Python-level RSI: reseed a random fraction of envs from reference frames.'''
@@ -283,12 +282,10 @@ def train(cfg: ImitationTrainConfig) -> None:
         ref_qpos_np = ref_qpos_np.copy()  # avoid mutating all_qpos
         ref_qpos_np[:, 7:19] = np.clip(ref_qpos_np[:, 7:19], _go2_lo, _go2_hi)
 
-        _ps3 = getattr(env_state, "pipeline_state", None) or env_state.data
-        nv_env = _ps3.qvel.shape[-1]
-        if all_qvel is not None:
-            ref_qvel_np = all_qvel[gf][:, :nv_env]
-        else:
-            ref_qvel_np = np.zeros((cfg.num_envs, nv_env), dtype=np.float32)
+        nv_env = env_state.pipeline_state.qvel.shape[-1]
+        # Zero injected velocities -- clip-derived vels are finite-difference
+        # artifacts (vmax up to 63 rad/s) that destabilize MuJoCo on first step.
+        ref_qvel_np = np.zeros((cfg.num_envs, nv_env), dtype=np.float32)
 
         rsi_mask_j = jnp.asarray(rsi_mask_np)
         ref_qpos_j = jnp.asarray(ref_qpos_np, dtype=jnp.float32)
@@ -509,20 +506,4 @@ def train(cfg: ImitationTrainConfig) -> None:
 
     _save_ckpt(cfg.checkpoint_dir, cfg.ppo.total_iterations,
                policy_params, value_params, normalizer_params)
-    print(f"[imit] done in {(time.time() - start) / 60:.1f} min")
-
-
-def _save_ckpt(out_dir: Path, it: int, policy_params, value_params,
-               normalizer_params=None):
-    import pickle
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    p = out_dir / f"imit_v1_it{it:06d}.pkl"
-    with p.open("wb") as f:
-        pickle.dump(
-            {"policy": policy_params, "value": value_params,
-             "normalizer": normalizer_params, "iteration": it}, f,
-        )
-    latest = out_dir / "imit_v1_latest.pkl"
-    latest.write_bytes(p.read_bytes())
-    print(f"[imit] checkpoint -> {p}  (latest -> {latest})")
+    print(f"[imit] done in {(time.time() - start) /
