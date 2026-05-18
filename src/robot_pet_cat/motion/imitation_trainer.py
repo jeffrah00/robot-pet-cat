@@ -50,7 +50,7 @@ class PPOConfig:
     gae_lambda: float = 0.95
     clipping_epsilon: float = 0.2
     entropy_cost: float = 1.0e-2
-    learning_rate: float = 3.0e-4
+    learning_rate: float = 1.0e-3
     max_grad_norm: float = 1.0
     policy_hidden_sizes: Sequence[int] = (512, 256, 128)
     value_hidden_sizes: Sequence[int] = (512, 256, 128)
@@ -74,9 +74,10 @@ class ImitationTrainConfig:
     imitation_sigma_sq: float = 0.5
 
     # Fraction of envs to seed from a random reference frame at each rollout
-    # start (Reference State Initialization).  0.8 is aggressive but
-    # necessary for cold-start training with no prior locomotion policy.
-    rsi_prob: float = 0.8
+    # start (Reference State Initialization).  0.5 balances coverage vs.
+    # stability: half the envs start from known-good standing poses each reset,
+    # providing a stable gradient floor even when some reference frames are extreme.
+    rsi_prob: float = 0.5
 
     env_name: str = "Go2JoystickFlatTerrain"
     num_envs: int = 4096
@@ -282,6 +283,28 @@ def train(cfg: ImitationTrainConfig) -> None:
         ref_qpos_np = ref_qpos_np.copy()  # avoid mutating all_qpos
         ref_qpos_np[:, 7:19] = np.clip(ref_qpos_np[:, 7:19], _go2_lo, _go2_hi)
 
+        # Height filter: reject airborne reference frames (mid-jump / mid-flip).
+        # qpos[2] is the floating-base z.  Nominal Go2 standing height is ~0.28 m;
+        # frames with z > 0.75 m are airborne states that generate enormous contact
+        # forces even with zero injected qvel, causing physics explosions that zero
+        # out rewards and starve the gradient.
+        # Fallback: keep the clamped joint angles but reset the root to a safe
+        # ground-level standing pose (z=0.28 m, identity quaternion).
+        _RSI_Z_MAX = 0.75  # m
+        airborne = ref_qpos_np[:, 2] > _RSI_Z_MAX
+        if airborne.any():
+            n_air = int(airborne.sum())
+            ref_qpos_np[airborne, 2] = 0.28          # standing z
+            ref_qpos_np[airborne, 3] = 1.0           # quat w (upright)
+            ref_qpos_np[airborne, 4] = 0.0           # quat x
+            ref_qpos_np[airborne, 5] = 0.0           # quat y
+            ref_qpos_np[airborne, 6] = 0.0           # quat z
+            # Also zero xy drift so envs don't start far from origin.
+            ref_qpos_np[airborne, 0] = 0.0
+            ref_qpos_np[airborne, 1] = 0.0
+            print(f"[imit] RSI height-filter: {n_air}/{cfg.num_envs} "
+                  f"airborne frames clamped to standing pose")
+
         nv_env = env_state.pipeline_state.qvel.shape[-1]
         # Zero injected velocities -- clip-derived vels are finite-difference
         # artifacts (vmax up to 63 rad/s) that destabilize MuJoCo on first step.
@@ -458,42 +481,4 @@ def train(cfg: ImitationTrainConfig) -> None:
 
     # Initial RSI: seed all envs from reference frames before iteration 0.
     print("[imit] applying initial RSI ...")
-    env_state = _do_rsi(env_state)
-    print("[imit] initial RSI done -- beginning training")
-
-    start = time.time()
-    total_env_steps = 0
-
-    for it in range(cfg.ppo.total_iterations):
-        # Reference sequence for this rollout (Python -> JAX).
-        ref_qpos_seq = _sample_ref_seq()   # (num_envs, T, nq)
-
-        rng, k_roll = jax.random.split(rng)
-        env_state, _, traj, last_v = rollout(
-            env_state, ref_qpos_seq, normalizer_params,
-            policy_params, value_params, k_roll,
-            unroll_length=cfg.ppo.unroll_length,
-        )
-
-        # Advance reference frame pointers.
-        _advance_ref_frames()
-
-        # GAE on augmented reward.
-        advs, returns = compute_gae(
-            traj["reward"], traj["value"], traj["done"], last_v,
-        )
-
-        # Flatten (T, B, ...) -> (T*B, ...) for minibatch SGD.
-        def flatten(x):
-            return x.reshape((-1,) + x.shape[2:])
-        obs_flat      = jax.tree_util.tree_map(flatten, traj["obs"])
-        act_flat      = flatten(traj["act"])
-        raw_act_flat  = flatten(traj["raw_act"])
-        log_prob_flat = flatten(traj["log_prob"])
-        advs_flat     = flatten(advs)
-        returns_flat  = flatten(returns)
-
-        n = jax.tree_util.tree_leaves(obs_flat)[0].shape[0]
-        mb_size = n // cfg.ppo.num_minibatches
-
-        for _epoch in range(cfg.ppo.num_updates_per_batc
+   

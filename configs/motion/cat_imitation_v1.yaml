@@ -28,8 +28,10 @@ imitation_sigma_sq: 0.5
 
 # --- RSI ---------------------------------------------------------------------
 # Fraction of envs to seed from a random reference frame at each rollout start.
-# 0.8 is aggressive but necessary for cold-start training.
-rsi_prob: 0.8
+# 0.5: half start from reference frames, half from standing pose each reset.
+# Airborne frames (z > 0.75m) are automatically clamped to a safe standing pose
+# by the height filter in _do_rsi.
+rsi_prob: 0.5
 
 # --- Env ---------------------------------------------------------------------
 env_name: Go2JoystickFlatTerrain
@@ -46,14 +48,10 @@ ppo:
   gae_lambda: 0.95
   clipping_epsilon: 0.2
   entropy_cost: 0.01
-  learning_rate: 0.0003
+  learning_rate: 0.001
   max_grad_norm: 1.0
   policy_hidden_sizes: [512, 256, 128]
   value_hidden_sizes:  [512, 256, 128]
 
 # --- Run-level ---------------------------------------------------------------
-seed: 0
-log_interval_iters: 10
-eval_interval_iters: 100
-checkpoint_interval_iters: 500
-checkpoint_dir: checkpoints/motion_imitation_v1
+see
