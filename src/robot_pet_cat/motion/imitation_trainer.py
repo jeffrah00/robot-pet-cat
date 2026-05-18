@@ -248,7 +248,7 @@ def train(cfg: ImitationTrainConfig) -> None:
     def _apply_rsi_jit(env_state, ref_qpos_j, ref_qvel_j, rsi_mask_j):
         '''Replace qpos/qvel for envs where rsi_mask=True.
         BraxAutoResetWrapper exposes the MuJoCo data as env_state.data
-        (not env_state.pipeline_state -- that field doesn't exist on the
+        (not env_state.pipeline_state -- that field does not exist on the
         wrapped State).  We modify qpos/qvel and rebuild the state in-place.
         '''
         ps = env_state.data
@@ -301,7 +301,7 @@ def train(cfg: ImitationTrainConfig) -> None:
             ref_qpos_np[airborne, 4] = 0.0           # quat x
             ref_qpos_np[airborne, 5] = 0.0           # quat y
             ref_qpos_np[airborne, 6] = 0.0           # quat z
-            # Also zero xy drift so envs don't start far from origin.
+            # Also zero xy drift so envs do not start far from origin.
             ref_qpos_np[airborne, 0] = 0.0
             ref_qpos_np[airborne, 1] = 0.0
             print(f"[imit] RSI height-filter: {n_air}/{cfg.num_envs} "
@@ -343,7 +343,7 @@ def train(cfg: ImitationTrainConfig) -> None:
             )
         return s.qpos
 
-    # Capture reward scalars and sigma as Python constants so they're
+    # Capture reward scalars and sigma as Python constants so they are
     # baked into the JIT trace (avoids retracing when cfg changes).
     _task_w = cfg.task_reward_weight
     _imit_w = cfg.imitation_reward_weight
@@ -481,4 +481,97 @@ def train(cfg: ImitationTrainConfig) -> None:
     rng, k_reset = jax.random.split(rng)
     env_state = jax.jit(env.reset)(jax.random.split(k_reset, cfg.num_envs))
 
-    #
+    # Initial RSI: seed all envs from reference frames before iteration 0.
+    print("[imit] applying initial RSI ...")
+    env_state = _do_rsi(env_state)
+    print("[imit] initial RSI done -- beginning training")
+
+    start = time.time()
+    total_env_steps = 0
+
+    for it in range(cfg.ppo.total_iterations):
+        # Reference sequence for this rollout (Python -> JAX).
+        ref_qpos_seq = _sample_ref_seq()   # (num_envs, T, nq)
+
+        rng, k_roll = jax.random.split(rng)
+        env_state, _, traj, last_v = rollout(
+            env_state, ref_qpos_seq, normalizer_params,
+            policy_params, value_params, k_roll,
+            unroll_length=cfg.ppo.unroll_length,
+        )
+
+        # Advance reference frame pointers.
+        _advance_ref_frames()
+
+        # GAE on augmented reward.
+        advs, returns = compute_gae(
+            traj["reward"], traj["value"], traj["done"], last_v,
+        )
+
+        # Flatten (T, B, ...) -> (T*B, ...) for minibatch SGD.
+        def flatten(x):
+            return x.reshape((-1,) + x.shape[2:])
+        obs_flat      = jax.tree_util.tree_map(flatten, traj["obs"])
+        act_flat      = flatten(traj["act"])
+        raw_act_flat  = flatten(traj["raw_act"])
+        log_prob_flat = flatten(traj["log_prob"])
+        advs_flat     = flatten(advs)
+        returns_flat  = flatten(returns)
+
+        n = jax.tree_util.tree_leaves(obs_flat)[0].shape[0]
+        mb_size = n // cfg.ppo.num_minibatches
+
+        for _epoch in range(cfg.ppo.num_updates_per_batch):
+            rng, k_perm = jax.random.split(rng)
+            perm = jax.random.permutation(k_perm, n)
+            for mb in range(cfg.ppo.num_minibatches):
+                idx = perm[mb * mb_size:(mb + 1) * mb_size]
+                obs_mb = jax.tree_util.tree_map(lambda x: x[idx], obs_flat)
+                policy_params, value_params, opt_state, ppo_loss, ppo_aux = ppo_update(
+                    normalizer_params, policy_params, value_params, opt_state,
+                    obs_mb, act_flat[idx], log_prob_flat[idx],
+                    raw_act_flat[idx], advs_flat[idx], returns_flat[idx],
+                )
+
+        # Update running obs normalizer.
+        normalizer_params = running_statistics.update(normalizer_params, obs_flat)
+
+        # RSI for next rollout: reseed rsi_prob fraction of envs.
+        env_state = _do_rsi(env_state)
+
+        total_env_steps += cfg.num_envs * cfg.ppo.unroll_length
+        if (it + 1) % cfg.log_interval_iters == 0:
+            wall = time.time() - start
+            sps  = total_env_steps / max(wall, 1e-6)
+            r_task = float(jnp.mean(traj["task_reward"]))
+            r_imit = float(jnp.mean(traj["imit_reward"]))
+            print(
+                f"[imit] it {it+1:>5d}  step {total_env_steps:>11,d}  "
+                f"r_task={r_task:+.3f} r_imit={r_imit:+.3f}  "
+                f"ppo_loss={float(ppo_loss):+.3f}  "
+                f"{sps:>7,.0f} steps/s  wall={wall/60:.1f}m"
+            )
+
+        if (it + 1) % cfg.checkpoint_interval_iters == 0:
+            _save_ckpt(cfg.checkpoint_dir, it + 1,
+                       policy_params, value_params, normalizer_params)
+
+    _save_ckpt(cfg.checkpoint_dir, cfg.ppo.total_iterations,
+               policy_params, value_params, normalizer_params)
+    print(f"[imit] done in {(time.time() - start) / 60:.1f} min")
+
+
+def _save_ckpt(out_dir: Path, it: int, policy_params, value_params,
+               normalizer_params=None):
+    import pickle
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p = out_dir / f"imit_v1_it{it:06d}.pkl"
+    with p.open("wb") as f:
+        pickle.dump(
+            {"policy": policy_params, "value": value_params,
+             "normalizer": normalizer_params, "iteration": it}, f,
+        )
+    latest = out_dir / "imit_v1_latest.pkl"
+    latest.write_bytes(p.read_bytes())
+    print(f"[imit] checkpoint -> {p}  (latest -> {latest})")
