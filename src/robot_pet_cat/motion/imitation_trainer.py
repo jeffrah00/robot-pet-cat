@@ -275,6 +275,13 @@ def train(cfg: ImitationTrainConfig) -> None:
         # Build ref arrays for ALL envs; JAX where-mask handles RSI vs keep.
         gf = clip_starts[ref_clip_idx] + ref_frame_idx  # (num_envs,)
         ref_qpos_np = all_qpos[gf]                       # (num_envs, nq)
+        # Clamp joint angles to Go2 limits to prevent physics instability.
+        # qpos[7:19] = 12 leg joints (FL/FR/RL/RR x [hip, thigh, calf]).
+        # Hip: [-1.0472, 1.0472], Thigh: [-1.5708, 3.4907], Calf: [-2.7227, -0.8378]
+        _go2_lo = np.array([-1.0472, -1.5708, -2.7227] * 4, dtype=np.float32)
+        _go2_hi = np.array([ 1.0472,  3.4907, -0.8378] * 4, dtype=np.float32)
+        ref_qpos_np = ref_qpos_np.copy()  # avoid mutating all_qpos
+        ref_qpos_np[:, 7:19] = np.clip(ref_qpos_np[:, 7:19], _go2_lo, _go2_hi)
 
         _ps3 = getattr(env_state, "pipeline_state", None) or env_state.data
         nv_env = _ps3.qvel.shape[-1]
