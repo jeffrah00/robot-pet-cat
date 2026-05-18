@@ -76,6 +76,11 @@ class AMPTrainConfigV2:
     # arrives at the AMP phase already calibrated rather than cold.
     # Set to 0 to disable (pure AMP from the start).
     style_warmup_iters: int = 0
+    # Number of iterations after warmup over which to linearly ramp
+    # style_reward_weight from 0 → its full value. A gradual ramp prevents the
+    # sudden reward-distribution shift at iter `style_warmup_iters` from
+    # destabilising the PPO value function. Set to 0 for a hard switch.
+    style_ramp_iters: int = 0
 
     env_name: str = "Go2JoystickFlatTerrain"
     num_envs: int = 4096
@@ -397,11 +402,17 @@ def train(cfg: AMPTrainConfigV2) -> None:
             unroll_length=cfg.ppo.unroll_length,
         )
 
-        # Style warmup: zero AMP contribution for the first style_warmup_iters
-        # iterations so PPO can discover locomotion before the discriminator
-        # starts shaping the gait. The discriminator still trains throughout,
-        # so it arrives at the post-warmup phase already calibrated.
-        _eff_sw = 0.0 if it < cfg.style_warmup_iters else cfg.style_reward_weight
+        # Style warmup + ramp: zero AMP contribution for the first
+        # style_warmup_iters iterations, then linearly ramp to the full
+        # style_reward_weight over style_ramp_iters iterations. This prevents
+        # the hard reward-distribution shift from destabilising PPO's value fn.
+        if it < cfg.style_warmup_iters:
+            _eff_sw = 0.0
+        elif cfg.style_ramp_iters > 0 and it < cfg.style_warmup_iters + cfg.style_ramp_iters:
+            frac = (it - cfg.style_warmup_iters) / cfg.style_ramp_iters
+            _eff_sw = frac * cfg.style_reward_weight
+        else:
+            _eff_sw = cfg.style_reward_weight
         traj["reward"] = (
             cfg.task_reward_weight * traj["task_reward"]
             + _eff_sw * traj["style_reward"]
@@ -470,7 +481,12 @@ def train(cfg: AMPTrainConfigV2) -> None:
             sps = total_env_steps / max(wall, 1e-6)
             r_task = float(jnp.mean(traj["task_reward"]))
             r_style = float(jnp.mean(traj["style_reward"]))
-            phase = "WARMUP" if it < cfg.style_warmup_iters else "AMP"
+            if it < cfg.style_warmup_iters:
+                phase = "WARMUP"
+            elif cfg.style_ramp_iters > 0 and it < cfg.style_warmup_iters + cfg.style_ramp_iters:
+                phase = "RAMP"
+            else:
+                phase = "AMP"
             print(
                 f"[amp-v2] it {it+1:>5d} [{phase}]  step {total_env_steps:>11,d}  "
                 f"r_task={r_task:+.3f} r_style={r_style:+.3f} sw={_eff_sw:.2f}  "
@@ -505,3 +521,4 @@ def _save_ckpt(out_dir: Path, it: int, policy_params, value_params, disc_params,
     latest = out_dir / "amp_v2_latest.pkl"
     latest.write_bytes(p.read_bytes())
     print(f"[amp-v2] checkpoint -> {p}  (latest -> {latest})")
+  

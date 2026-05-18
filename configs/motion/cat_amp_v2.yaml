@@ -1,31 +1,40 @@
 # True AMP-PPO config for Go2 cat-style locomotion.
 # Consumed by `rpc train-motion-v2 --config configs/motion/cat_amp_v2.yaml`.
 # Maps onto src/robot_pet_cat/motion/amp_trainer_v2.py:AMPTrainConfigV2.
+#
+# train_v4 changes vs train_v3:
+#   - motion_clips_dir: locomotion-only clips (no lying/grooming/play)
+#   - disc_grad_penalty_coef: 1.0  (was 10.0 -- D was paralysed by R1)
+#   - style_warmup_iters: 500      (was 200 -- v1 warm-start needed more time)
+#   - style_ramp_iters: 100        (new -- linear ramp prevents PPO loss spikes)
+#   - init_policy_ckpt: removed    (v1 warm-start put policy in bad minimum)
 
 # --- AMP scalars -----------------------------------------------------------
-motion_clips_dir: data/motion_clips
-# Style was 2.0 in the first v2 run -- D dominated, policy collapsed to
-# "stand still" because that's a moderate-style + zero-task local optimum.
-# Drop style to 0.5 so task reward (track the brain-issued velocity command)
-# is the dominant signal and the policy actually moves; AMP then biases the
-# motion *style* toward catlike without overpowering it.
+# Locomotion-only clips: trot, walk, gallop, run. Lying/grooming/play clips
+# excluded -- stationary poses gave the policy a free style reward for
+# doing nothing, collapsing r_task.
+motion_clips_dir: data/motion_clips_loco
 style_reward_weight: 0.5
 task_reward_weight: 1.0
 use_qvel_in_features: false
 
 # --- Discriminator hyperparams --------------------------------------------
 disc_hidden_sizes: [1024, 512]
-disc_grad_penalty_coef: 10.0
+# Reduced from 10.0 -- R1 at 10.0 paralysed D throughout train_v3 (d_loss
+# stuck at ~0.5, never converged). At 1.0 D can develop sharp real/fake
+# boundaries without the gradient penalty dominating every update.
+disc_grad_penalty_coef: 1.0
 disc_learning_rate: 0.0001
 disc_batch_size: 4096
 disc_updates_per_iter: 1
 disc_pretrain_steps: 200
-# Pure-PPO warmup before AMP style shaping kicks in. During these iterations
-# style_reward_weight is forced to 0 so the policy finds basic forward
-# locomotion first. The discriminator trains throughout so it arrives at the
-# AMP phase already calibrated. 200 iters ~= 16M env steps at 4096 envs x 20
-# unroll -- enough for r_task to go clearly positive before AMP engages.
-style_warmup_iters: 200
+# Increased from 200 -- cold-start (no v1 init) needs ~500 iters (~41M steps)
+# to push r_task clearly positive before AMP engages.
+style_warmup_iters: 500
+# Linear ramp from sw=0 to sw=0.5 over 100 iters after warmup ends.
+# Prevents the hard reward-distribution shift from destabilising PPO's value fn
+# (train_v3 showed ppo_loss spikes to +2.0 at the hard switch point).
+style_ramp_iters: 100
 
 # --- Env -------------------------------------------------------------------
 env_name: Go2JoystickFlatTerrain
@@ -54,6 +63,6 @@ eval_interval_iters: 100
 checkpoint_interval_iters: 500
 checkpoint_dir: checkpoints/motion_v2
 
-# Warm-start from the v1 PPO ckpt so we skip the cold-start exploration
-# phase. Comment out for a from-scratch run.
-init_policy_ckpt: checkpoints/motion/ppo_params.pkl
+# init_policy_ckpt removed for train_v4: the v1 warm-start landed the policy
+# in a bad minimum (r_task never exceeded +0.016 in warmup). Cold-start with
+# 500 warmup iters instead.
