@@ -247,9 +247,11 @@ def train(cfg: ImitationTrainConfig) -> None:
     @jax.jit
     def _apply_rsi_jit(env_state, ref_qpos_j, ref_qvel_j, rsi_mask_j):
         '''Replace qpos/qvel for envs where rsi_mask=True.
-        Works on mjx.Data and brax State objects that expose .replace().
+        BraxAutoResetWrapper exposes the MuJoCo data as env_state.data
+        (not env_state.pipeline_state -- that field doesn't exist on the
+        wrapped State).  We modify qpos/qvel and rebuild the state in-place.
         '''
-        ps = env_state.pipeline_state
+        ps = env_state.data
         nq_env = ps.qpos.shape[-1]
         nv_env = ps.qvel.shape[-1]
         # Clip reference arrays to env dims in case of shape mismatch.
@@ -258,7 +260,7 @@ def train(cfg: ImitationTrainConfig) -> None:
         new_qpos = jnp.where(rsi_mask_j[:, None], rq, ps.qpos)
         new_qvel = jnp.where(rsi_mask_j[:, None], rv, ps.qvel)
         new_ps = ps.replace(qpos=new_qpos, qvel=new_qvel)
-        return env_state.replace(pipeline_state=new_ps)
+        return env_state.replace(data=new_ps)
 
     def _do_rsi(env_state):
         '''Python-level RSI: reseed a random fraction of envs from reference frames.'''
@@ -305,7 +307,7 @@ def train(cfg: ImitationTrainConfig) -> None:
             print(f"[imit] RSI height-filter: {n_air}/{cfg.num_envs} "
                   f"airborne frames clamped to standing pose")
 
-        nv_env = env_state.pipeline_state.qvel.shape[-1]
+        nv_env = env_state.data.qvel.shape[-1]
         # Zero injected velocities -- clip-derived vels are finite-difference
         # artifacts (vmax up to 63 rad/s) that destabilize MuJoCo on first step.
         ref_qvel_np = np.zeros((cfg.num_envs, nv_env), dtype=np.float32)
@@ -479,6 +481,4 @@ def train(cfg: ImitationTrainConfig) -> None:
     rng, k_reset = jax.random.split(rng)
     env_state = jax.jit(env.reset)(jax.random.split(k_reset, cfg.num_envs))
 
-    # Initial RSI: seed all envs from reference frames before iteration 0.
-    print("[imit] applying initial RSI ...")
-   
+    #
