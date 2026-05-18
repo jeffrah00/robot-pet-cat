@@ -54,4 +54,9 @@ ppo:
   value_hidden_sizes:  [512, 256, 128]
 
 # --- Run-level ---------------------------------------------------------------
-see
+
+seed: 0
+log_interval_iters: 10
+eval_interval_iters: 100
+checkpoint_interval_iters: 500
+checkpoint_dir: checkpoints/motion_imitation_v1
