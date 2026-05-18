@@ -264,7 +264,11 @@ def train(cfg: ImitationTrainConfig) -> None:
         frame_indices = (ref_frame_idx[:, None] + frame_offsets) % lengths_e[:, None]
         global_indices = starts_e[:, None] + frame_indices    # (num_envs, T)
         seq = all_qpos[global_indices]                        # (num_envs, T, nq)
-        return jnp.asarray(seq, dtype=jnp.float32)
+        # Phase clock: normalised position within the clip -> sin/cos pair
+        phase_rad  = 2.0 * np.pi * frame_indices / lengths_e[:, None]  # (E, T)
+        ref_phase  = np.stack([np.sin(phase_rad), np.cos(phase_rad)], axis=-1)  # (E, T, 2)
+        return (jnp.asarray(seq,       dtype=jnp.float32),
+                jnp.asarray(ref_phase, dtype=jnp.float32))
 
     def _advance_ref_frames():
         '''Advance per-env frame pointers by the number of clip frames consumed.
@@ -390,16 +394,18 @@ def train(cfg: ImitationTrainConfig) -> None:
     _sigma_sq = cfg.imitation_sigma_sq
 
     @functools.partial(jax.jit, static_argnames=("unroll_length",))
-    def rollout(env_state, ref_qpos_seq, norm_params, policy_params, value_params,
+    def rollout(env_state, ref_qpos_seq, ref_phase_seq, norm_params, policy_params, value_params,
                 rng, unroll_length: int):
         '''Roll out unroll_length steps with per-step imitation reward.
 
         ref_qpos_seq : (num_envs, unroll_length, nq) -- transposed to
                        (unroll_length, num_envs, nq) as scan input.
         '''
-        ref_T = jnp.transpose(ref_qpos_seq, (1, 0, 2))   # (T, num_envs, nq)
+        ref_T     = jnp.transpose(ref_qpos_seq,   (1, 0, 2))  # (T, num_envs, nq)
+        ref_ph_T  = jnp.transpose(ref_phase_seq,  (1, 0, 2))  # (T, num_envs, 2)
 
-        def step_fn(carry, ref_qpos_t):
+        def step_fn(carry, xs):
+            ref_qpos_t, ref_phase_t = xs
             env_state, rng = carry
             rng, k_act = jax.random.split(rng)
             # Sanitize obs before network calls -- NaN obs from physics explosions
@@ -407,6 +413,11 @@ def train(cfg: ImitationTrainConfig) -> None:
             safe_obs = jax.tree_util.tree_map(
                 lambda x: jnp.where(jnp.isfinite(x), x, jnp.zeros_like(x)),
                 env_state.obs
+            )
+            # Augment 'state' with phase clock (sin, cos) for temporal context.
+            safe_obs = dict(safe_obs)
+            safe_obs['state'] = jnp.concatenate(
+                [safe_obs['state'], ref_phase_t], axis=-1  # (..., 48+2=50)
             )
             act, log_prob, raw_act = _policy_act(norm_params, policy_params,
                                                  safe_obs, k_act)
@@ -443,7 +454,7 @@ def train(cfg: ImitationTrainConfig) -> None:
             }
 
         (final_state, final_rng), traj = jax.lax.scan(
-            step_fn, (env_state, rng), ref_T, length=unroll_length,
+            step_fn, (env_state, rng), (ref_T, ref_ph_T), length=unroll_length,
         )
         last_v = _value_predict(norm_params, value_params, final_state.obs)
         return final_state, final_rng, traj, last_v
@@ -531,11 +542,11 @@ def train(cfg: ImitationTrainConfig) -> None:
 
     for it in range(cfg.ppo.total_iterations):
         # Reference sequence for this rollout (Python -> JAX).
-        ref_qpos_seq = _sample_ref_seq()   # (num_envs, T, nq)
+        ref_qpos_seq, ref_phase_seq = _sample_ref_seq()   # (E, T, nq), (E, T, 2)
 
         rng, k_roll = jax.random.split(rng)
         env_state, _, traj, last_v = rollout(
-            env_state, ref_qpos_seq, normalizer_params,
+            env_state, ref_qpos_seq, ref_phase_seq, normalizer_params,
             policy_params, value_params, k_roll,
             unroll_length=cfg.ppo.unroll_length,
         )
