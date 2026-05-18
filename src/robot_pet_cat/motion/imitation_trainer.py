@@ -478,4 +478,140 @@ def train(cfg: ImitationTrainConfig) -> None:
                    obs, act, log_prob_old, raw_act, advs, returns):
         # Sanitize before loss_fn closes over these -- NaN obs/log_probs from
         # physics explosions produce NaN logits and ratios, corrupting PPO loss.
-        obs          = ja
+        obs          = jax.tree_util.tree_map(
+            lambda x: jnp.where(jnp.isfinite(x), x, jnp.zeros_like(x)), obs
+        )
+        log_prob_old = jnp.where(jnp.isfinite(log_prob_old), log_prob_old, jnp.zeros_like(log_prob_old))
+        advs         = jnp.where(jnp.isfinite(advs),         advs,         jnp.zeros_like(advs))
+        returns      = jnp.where(jnp.isfinite(returns),      returns,      jnp.zeros_like(returns))
+
+        def loss_fn(params):
+            p_params, v_params = params
+            logits = ppo_nets.policy_network.apply(norm_params, p_params, obs)
+            dist = ppo_nets.parametric_action_distribution
+            log_prob = dist.log_prob(logits, raw_act)
+            entropy  = dist.entropy(logits, jax.random.PRNGKey(0)).mean()
+            ratio    = jnp.exp(log_prob - log_prob_old)
+            adv_norm = (advs - advs.mean()) / (advs.std() + 1e-8)
+            unclipped = ratio * adv_norm
+            clipped = jnp.clip(ratio,
+                                1 - cfg.ppo.clipping_epsilon,
+                                1 + cfg.ppo.clipping_epsilon) * adv_norm
+            policy_loss = -jnp.minimum(unclipped, clipped).mean()
+            v_pred = ppo_nets.value_network.apply(norm_params, v_params, obs)
+            if v_pred.ndim > 1:
+                v_pred = jnp.squeeze(v_pred, axis=-1)
+            value_loss  = 0.5 * ((v_pred - returns) ** 2).mean()
+            total = policy_loss + value_loss - cfg.ppo.entropy_cost * entropy
+            return total, {"policy_loss": policy_loss, "value_loss": value_loss,
+                           "entropy": entropy}
+
+        (loss, aux), grads = jax.value_and_grad(loss_fn, has_aux=True)(
+            (policy_params, value_params)
+        )
+        updates, new_opt = optimizer.update(grads, opt_state,
+                                            (policy_params, value_params))
+        new_params = optax.apply_updates((policy_params, value_params), updates)
+        return new_params[0], new_params[1], new_opt, loss, aux
+
+    # -------------------------------------------------------------------------
+    # 7. Main loop
+    # -------------------------------------------------------------------------
+    print(f"[imit] starting PPO ({cfg.ppo.total_iterations} iterations)")
+    rng, k_reset = jax.random.split(rng)
+    env_state = jax.jit(env.reset)(jax.random.split(k_reset, cfg.num_envs))
+
+    # Initial RSI: seed all envs from reference frames before iteration 0.
+    print("[imit] applying initial RSI ...")
+    env_state = _do_rsi(env_state)
+    print("[imit] initial RSI done -- beginning training")
+
+    start = time.time()
+    total_env_steps = 0
+
+    for it in range(cfg.ppo.total_iterations):
+        # Reference sequence for this rollout (Python -> JAX).
+        ref_qpos_seq = _sample_ref_seq()   # (num_envs, T, nq)
+
+        rng, k_roll = jax.random.split(rng)
+        env_state, _, traj, last_v = rollout(
+            env_state, ref_qpos_seq, normalizer_params,
+            policy_params, value_params, k_roll,
+            unroll_length=cfg.ppo.unroll_length,
+        )
+
+        # Advance reference frame pointers.
+        _advance_ref_frames()
+
+        # GAE on augmented reward.
+        advs, returns = compute_gae(
+            traj["reward"], traj["value"], traj["done"], last_v,
+        )
+
+        # Flatten (T, B, ...) -> (T*B, ...) for minibatch SGD.
+        def flatten(x):
+            return x.reshape((-1,) + x.shape[2:])
+        obs_flat      = jax.tree_util.tree_map(flatten, traj["obs"])
+        act_flat      = flatten(traj["act"])
+        raw_act_flat  = flatten(traj["raw_act"])
+        log_prob_flat = flatten(traj["log_prob"])
+        advs_flat     = flatten(advs)
+        returns_flat  = flatten(returns)
+
+        n = jax.tree_util.tree_leaves(obs_flat)[0].shape[0]
+        mb_size = n // cfg.ppo.num_minibatches
+
+        for _epoch in range(cfg.ppo.num_updates_per_batch):
+            rng, k_perm = jax.random.split(rng)
+            perm = jax.random.permutation(k_perm, n)
+            for mb in range(cfg.ppo.num_minibatches):
+                idx = perm[mb * mb_size:(mb + 1) * mb_size]
+                obs_mb = jax.tree_util.tree_map(lambda x: x[idx], obs_flat)
+                policy_params, value_params, opt_state, ppo_loss, ppo_aux = ppo_update(
+                    normalizer_params, policy_params, value_params, opt_state,
+                    obs_mb, act_flat[idx], log_prob_flat[idx],
+                    raw_act_flat[idx], advs_flat[idx], returns_flat[idx],
+                )
+
+        # Update running obs normalizer.
+        normalizer_params = running_statistics.update(normalizer_params, obs_flat)
+
+        # RSI for next rollout: reseed rsi_prob fraction of envs.
+        env_state = _do_rsi(env_state)
+
+        total_env_steps += cfg.num_envs * cfg.ppo.unroll_length
+        if (it + 1) % cfg.log_interval_iters == 0:
+            wall = time.time() - start
+            sps  = total_env_steps / max(wall, 1e-6)
+            r_task = float(jnp.mean(traj["task_reward"]))
+            r_imit = float(jnp.mean(traj["imit_reward"]))
+            print(
+                f"[imit] it {it+1:>5d}  step {total_env_steps:>11,d}  "
+                f"r_task={r_task:+.3f} r_imit={r_imit:+.3f}  "
+                f"ppo_loss={float(ppo_loss):+.3f}  "
+                f"{sps:>7,.0f} steps/s  wall={wall/60:.1f}m"
+            )
+
+        if (it + 1) % cfg.checkpoint_interval_iters == 0:
+            _save_ckpt(cfg.checkpoint_dir, it + 1,
+                       policy_params, value_params, normalizer_params)
+
+    _save_ckpt(cfg.checkpoint_dir, cfg.ppo.total_iterations,
+               policy_params, value_params, normalizer_params)
+    print(f"[imit] done in {(time.time() - start) / 60:.1f} min")
+
+
+def _save_ckpt(out_dir: Path, it: int, policy_params, value_params,
+               normalizer_params=None):
+    import pickle
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p = out_dir / f"imit_v1_it{it:06d}.pkl"
+    with p.open("wb") as f:
+        pickle.dump(
+            {"policy": policy_params, "value": value_params,
+             "normalizer": normalizer_params, "iteration": it}, f,
+        )
+    latest = out_dir / "imit_v1_latest.pkl"
+    latest.write_bytes(p.read_bytes())
+    print(f"[imit] checkpoint -> {p}  (latest -> {latest})")
