@@ -69,9 +69,16 @@ class ImitationTrainConfig:
     imitation_reward_weight: float = 1.0
 
     # Sharpness of the pose-matching Gaussian.
-    # sigma_sq=0.5 gives r_imit~0.79 at 0.1 rad avg joint error (12 joints),
-    # r_imit~0.38 at 0.2 rad, r_imit~0.003 at 0.5 rad.
-    imitation_sigma_sq: float = 0.5
+    # sigma_sq=0.25 gives r_imit~0.62 at 0.1 rad avg joint error (12 joints),
+    # r_imit~0.15 at 0.2 rad, r_imit~0.00002 at 0.5 rad.
+    # Previously 0.5 -- too large: at 0.32 rad error the gradient was weak
+    # and all envs had similar r_imit, collapsing the PPO advantage signal.
+    imitation_sigma_sq: float = 0.25
+
+    # Physics rate of the Go2 joystick env (Hz).  Reference clips run at 24-30
+    # fps; the trainer advances clip frames by floor(t * clip_fps / env_hz) per
+    # env step so the reference replays at the original capture speed.
+    env_hz: float = 50.0
 
     # Fraction of envs to seed from a random reference frame at each rollout
     # start (Reference State Initialization).  0.5 balances coverage vs.
@@ -97,12 +104,13 @@ def _load_clip_arrays(motion_clips_dir: Path):
 
     Returns
     -------
-    all_qpos : (total_frames, nq) float32
-    all_qvel : (total_frames, nv) float32  or  None if not present in .npz
-    clip_starts  : (n_clips,) int32 -- first frame index of each clip in all_qpos
-    clip_lengths : (n_clips,) int32 -- number of frames per clip
-    clip_names   : list[str]
-    nq           : int
+    all_qpos    : (total_frames, nq) float32
+    all_qvel    : (total_frames, nv) float32  or  None if not present in .npz
+    clip_starts : (n_clips,) int32 -- first frame index of each clip in all_qpos
+    clip_lengths: (n_clips,) int32 -- number of frames per clip
+    clip_fps    : (n_clips,) float32 -- original capture fps of each clip
+    clip_names  : list[str]
+    nq          : int
     '''
     paths = sorted(Path(motion_clips_dir).glob("*.npz"))
     if not paths:
@@ -111,7 +119,7 @@ def _load_clip_arrays(motion_clips_dir: Path):
             f"Run `rpc retarget` first."
         )
 
-    qpos_list, qvel_list, clip_names = [], [], []
+    qpos_list, qvel_list, clip_names, clip_fps_list = [], [], [], []
     any_qvel = True
 
     for p in paths:
@@ -119,8 +127,10 @@ def _load_clip_arrays(motion_clips_dir: Path):
         qpos = np.asarray(data["qpos"], dtype=np.float32)
         if len(qpos) < 2:
             continue
+        fps = float(data["fps"][0]) if "fps" in data.files else 30.0
         qpos_list.append(qpos)
         clip_names.append(p.stem)
+        clip_fps_list.append(fps)
         if "qvel" in data.files and any_qvel:
             qvel_list.append(np.asarray(data["qvel"], dtype=np.float32))
         else:
@@ -135,8 +145,9 @@ def _load_clip_arrays(motion_clips_dir: Path):
     clip_lengths = np.array([len(a) for a in qpos_list], dtype=np.int32)
     clip_starts = np.zeros(len(clip_lengths), dtype=np.int32)
     clip_starts[1:] = np.cumsum(clip_lengths[:-1])
+    clip_fps = np.array(clip_fps_list, dtype=np.float32)
 
-    return all_qpos, all_qvel, clip_starts, clip_lengths, clip_names, all_qpos.shape[1]
+    return all_qpos, all_qvel, clip_starts, clip_lengths, clip_fps, clip_names, all_qpos.shape[1]
 
 
 def train(cfg: ImitationTrainConfig) -> None:
@@ -156,14 +167,17 @@ def train(cfg: ImitationTrainConfig) -> None:
     # -------------------------------------------------------------------------
     # 1. Reference clip arrays (Python / numpy -- NOT JAX, for fast indexing)
     # -------------------------------------------------------------------------
-    all_qpos, all_qvel, clip_starts, clip_lengths, clip_names, nq = \
+    all_qpos, all_qvel, clip_starts, clip_lengths, clip_fps, clip_names, nq = \
         _load_clip_arrays(cfg.motion_clips_dir)
     n_clips = len(clip_names)
+    env_hz = cfg.env_hz  # Go2 joystick sim rate (50 Hz, dt=20 ms)
     print(f"[imit] reference clips: {n_clips} clips, "
-          f"{all_qpos.shape[0]} frames, nq={nq}, "
+          f"{all_qpos.shape[0]} frames, nq={nq}, env_hz={env_hz:.0f}Hz, "
           f"{'qvel present' if all_qvel is not None else 'no qvel in clips (RSI will zero qvel)'}")
-    for name, length in zip(clip_names, clip_lengths):
-        print(f"[imit]   {name}: {length} frames")
+    for name, length, fps in zip(clip_names, clip_lengths, clip_fps):
+        speed_mult = env_hz / fps
+        print(f"[imit]   {name}: {length} frames @ {fps:.1f} fps "
+              f"(replay step={fps/env_hz:.3f} clip-frames/env-step, {speed_mult:.2f}x speed WITHOUT fix)")
 
     # -------------------------------------------------------------------------
     # 2. Env
@@ -225,21 +239,47 @@ def train(cfg: ImitationTrainConfig) -> None:
     )
 
     def _sample_ref_seq():
-        '''Build (num_envs, unroll_length, nq) JAX array of reference poses.'''
+        '''Build (num_envs, unroll_length, nq) JAX array of reference poses.
+
+        FPS correction: clips are at 24-30 fps but the env steps at env_hz=50 Hz.
+        Without correction we would consume 1 clip frame per env step, replaying
+        the motion at 50 fps -- 1.67-2.09x too fast and physically untrackable.
+
+        Fix: at env step t, use clip frame floor(t * clip_fps / env_hz).
+        For a 25 fps clip: frame offsets are 0,0,1,1,2,2,... -- each clip frame
+        covers 2 env steps (40 ms), matching the 40 ms inter-frame interval.
+        '''
         T = cfg.ppo.unroll_length
-        lengths_e = clip_lengths[ref_clip_idx]       # (num_envs,)
-        starts_e = clip_starts[ref_clip_idx]         # (num_envs,)
-        t_off = np.arange(T, dtype=np.int32)         # (T,)
-        # frame_indices[e, t] = (ref_frame_idx[e] + t) % lengths_e[e]
-        frame_indices = (ref_frame_idx[:, None] + t_off[None, :]) % lengths_e[:, None]
-        global_indices = starts_e[:, None] + frame_indices   # (num_envs, T)
-        seq = all_qpos[global_indices]               # (num_envs, T, nq)
+        lengths_e  = clip_lengths[ref_clip_idx]      # (num_envs,)
+        starts_e   = clip_starts[ref_clip_idx]       # (num_envs,)
+        fps_e      = clip_fps[ref_clip_idx]          # (num_envs,) capture fps
+        frame_step = fps_e / env_hz                  # e.g. 25/50 = 0.5 frames/env-step
+
+        t_off = np.arange(T, dtype=np.float32)       # (T,)
+        # floor gives non-decreasing integer offsets; each clip frame is held for
+        # ceil(env_hz/clip_fps) env steps -- correct temporal correspondence.
+        frame_offsets = np.floor(
+            t_off[None, :] * frame_step[:, None]     # (num_envs, T)
+        ).astype(np.int32)
+        frame_indices = (ref_frame_idx[:, None] + frame_offsets) % lengths_e[:, None]
+        global_indices = starts_e[:, None] + frame_indices    # (num_envs, T)
+        seq = all_qpos[global_indices]                        # (num_envs, T, nq)
         return jnp.asarray(seq, dtype=jnp.float32)
 
     def _advance_ref_frames():
-        '''Advance per-env frame pointers by unroll_length (with clip wrap).'''
+        '''Advance per-env frame pointers by the number of clip frames consumed.
+
+        With fps correction, a T-step rollout consumes floor(T * clip_fps/env_hz)
+        clip frames (not T frames).  Advancing by floor(T * fps_e / env_hz) keeps
+        the frame pointer aligned so the next rollout continues from where this
+        one left off.
+        '''
         T = cfg.ppo.unroll_length
-        ref_frame_idx[:] = (ref_frame_idx + T) % clip_lengths[ref_clip_idx]
+        fps_e = clip_fps[ref_clip_idx]               # (num_envs,)
+        frame_advance = np.maximum(1,
+            np.floor(T * fps_e / env_hz).astype(np.int32)
+        )                                            # at least 1 to prevent stall
+        ref_frame_idx[:] = (ref_frame_idx + frame_advance) % clip_lengths[ref_clip_idx]
 
     # -------------------------------------------------------------------------
     # 5. Reference State Initialization (RSI)
@@ -248,7 +288,7 @@ def train(cfg: ImitationTrainConfig) -> None:
     def _apply_rsi_jit(env_state, ref_qpos_j, ref_qvel_j, rsi_mask_j):
         '''Replace qpos/qvel for envs where rsi_mask=True.
         BraxAutoResetWrapper exposes the MuJoCo data as env_state.data
-        (not env_state.pipeline_state -- that field does not exist on the
+        (not env_state.pipeline_state -- that field doesn't exist on the
         wrapped State).  We modify qpos/qvel and rebuild the state in-place.
         '''
         ps = env_state.data
@@ -301,7 +341,7 @@ def train(cfg: ImitationTrainConfig) -> None:
             ref_qpos_np[airborne, 4] = 0.0           # quat x
             ref_qpos_np[airborne, 5] = 0.0           # quat y
             ref_qpos_np[airborne, 6] = 0.0           # quat z
-            # Also zero xy drift so envs do not start far from origin.
+            # Also zero xy drift so envs don't start far from origin.
             ref_qpos_np[airborne, 0] = 0.0
             ref_qpos_np[airborne, 1] = 0.0
             print(f"[imit] RSI height-filter: {n_air}/{cfg.num_envs} "
@@ -343,7 +383,7 @@ def train(cfg: ImitationTrainConfig) -> None:
             )
         return s.qpos
 
-    # Capture reward scalars and sigma as Python constants so they are
+    # Capture reward scalars and sigma as Python constants so they're
     # baked into the JIT trace (avoids retracing when cfg changes).
     _task_w = cfg.task_reward_weight
     _imit_w = cfg.imitation_reward_weight
@@ -438,140 +478,4 @@ def train(cfg: ImitationTrainConfig) -> None:
                    obs, act, log_prob_old, raw_act, advs, returns):
         # Sanitize before loss_fn closes over these -- NaN obs/log_probs from
         # physics explosions produce NaN logits and ratios, corrupting PPO loss.
-        obs          = jax.tree_util.tree_map(
-            lambda x: jnp.where(jnp.isfinite(x), x, jnp.zeros_like(x)), obs
-        )
-        log_prob_old = jnp.where(jnp.isfinite(log_prob_old), log_prob_old, jnp.zeros_like(log_prob_old))
-        advs         = jnp.where(jnp.isfinite(advs),         advs,         jnp.zeros_like(advs))
-        returns      = jnp.where(jnp.isfinite(returns),      returns,      jnp.zeros_like(returns))
-
-        def loss_fn(params):
-            p_params, v_params = params
-            logits = ppo_nets.policy_network.apply(norm_params, p_params, obs)
-            dist = ppo_nets.parametric_action_distribution
-            log_prob = dist.log_prob(logits, raw_act)
-            entropy  = dist.entropy(logits, jax.random.PRNGKey(0)).mean()
-            ratio    = jnp.exp(log_prob - log_prob_old)
-            adv_norm = (advs - advs.mean()) / (advs.std() + 1e-8)
-            unclipped = ratio * adv_norm
-            clipped = jnp.clip(ratio,
-                                1 - cfg.ppo.clipping_epsilon,
-                                1 + cfg.ppo.clipping_epsilon) * adv_norm
-            policy_loss = -jnp.minimum(unclipped, clipped).mean()
-            v_pred = ppo_nets.value_network.apply(norm_params, v_params, obs)
-            if v_pred.ndim > 1:
-                v_pred = jnp.squeeze(v_pred, axis=-1)
-            value_loss  = 0.5 * ((v_pred - returns) ** 2).mean()
-            total = policy_loss + value_loss - cfg.ppo.entropy_cost * entropy
-            return total, {"policy_loss": policy_loss, "value_loss": value_loss,
-                           "entropy": entropy}
-
-        (loss, aux), grads = jax.value_and_grad(loss_fn, has_aux=True)(
-            (policy_params, value_params)
-        )
-        updates, new_opt = optimizer.update(grads, opt_state,
-                                            (policy_params, value_params))
-        new_params = optax.apply_updates((policy_params, value_params), updates)
-        return new_params[0], new_params[1], new_opt, loss, aux
-
-    # -------------------------------------------------------------------------
-    # 7. Main loop
-    # -------------------------------------------------------------------------
-    print(f"[imit] starting PPO ({cfg.ppo.total_iterations} iterations)")
-    rng, k_reset = jax.random.split(rng)
-    env_state = jax.jit(env.reset)(jax.random.split(k_reset, cfg.num_envs))
-
-    # Initial RSI: seed all envs from reference frames before iteration 0.
-    print("[imit] applying initial RSI ...")
-    env_state = _do_rsi(env_state)
-    print("[imit] initial RSI done -- beginning training")
-
-    start = time.time()
-    total_env_steps = 0
-
-    for it in range(cfg.ppo.total_iterations):
-        # Reference sequence for this rollout (Python -> JAX).
-        ref_qpos_seq = _sample_ref_seq()   # (num_envs, T, nq)
-
-        rng, k_roll = jax.random.split(rng)
-        env_state, _, traj, last_v = rollout(
-            env_state, ref_qpos_seq, normalizer_params,
-            policy_params, value_params, k_roll,
-            unroll_length=cfg.ppo.unroll_length,
-        )
-
-        # Advance reference frame pointers.
-        _advance_ref_frames()
-
-        # GAE on augmented reward.
-        advs, returns = compute_gae(
-            traj["reward"], traj["value"], traj["done"], last_v,
-        )
-
-        # Flatten (T, B, ...) -> (T*B, ...) for minibatch SGD.
-        def flatten(x):
-            return x.reshape((-1,) + x.shape[2:])
-        obs_flat      = jax.tree_util.tree_map(flatten, traj["obs"])
-        act_flat      = flatten(traj["act"])
-        raw_act_flat  = flatten(traj["raw_act"])
-        log_prob_flat = flatten(traj["log_prob"])
-        advs_flat     = flatten(advs)
-        returns_flat  = flatten(returns)
-
-        n = jax.tree_util.tree_leaves(obs_flat)[0].shape[0]
-        mb_size = n // cfg.ppo.num_minibatches
-
-        for _epoch in range(cfg.ppo.num_updates_per_batch):
-            rng, k_perm = jax.random.split(rng)
-            perm = jax.random.permutation(k_perm, n)
-            for mb in range(cfg.ppo.num_minibatches):
-                idx = perm[mb * mb_size:(mb + 1) * mb_size]
-                obs_mb = jax.tree_util.tree_map(lambda x: x[idx], obs_flat)
-                policy_params, value_params, opt_state, ppo_loss, ppo_aux = ppo_update(
-                    normalizer_params, policy_params, value_params, opt_state,
-                    obs_mb, act_flat[idx], log_prob_flat[idx],
-                    raw_act_flat[idx], advs_flat[idx], returns_flat[idx],
-                )
-
-        # Update running obs normalizer.
-        normalizer_params = running_statistics.update(normalizer_params, obs_flat)
-
-        # RSI for next rollout: reseed rsi_prob fraction of envs.
-        env_state = _do_rsi(env_state)
-
-        total_env_steps += cfg.num_envs * cfg.ppo.unroll_length
-        if (it + 1) % cfg.log_interval_iters == 0:
-            wall = time.time() - start
-            sps  = total_env_steps / max(wall, 1e-6)
-            r_task = float(jnp.mean(traj["task_reward"]))
-            r_imit = float(jnp.mean(traj["imit_reward"]))
-            print(
-                f"[imit] it {it+1:>5d}  step {total_env_steps:>11,d}  "
-                f"r_task={r_task:+.3f} r_imit={r_imit:+.3f}  "
-                f"ppo_loss={float(ppo_loss):+.3f}  "
-                f"{sps:>7,.0f} steps/s  wall={wall/60:.1f}m"
-            )
-
-        if (it + 1) % cfg.checkpoint_interval_iters == 0:
-            _save_ckpt(cfg.checkpoint_dir, it + 1,
-                       policy_params, value_params, normalizer_params)
-
-    _save_ckpt(cfg.checkpoint_dir, cfg.ppo.total_iterations,
-               policy_params, value_params, normalizer_params)
-    print(f"[imit] done in {(time.time() - start) / 60:.1f} min")
-
-
-def _save_ckpt(out_dir: Path, it: int, policy_params, value_params,
-               normalizer_params=None):
-    import pickle
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    p = out_dir / f"imit_v1_it{it:06d}.pkl"
-    with p.open("wb") as f:
-        pickle.dump(
-            {"policy": policy_params, "value": value_params,
-             "normalizer": normalizer_params, "iteration": it}, f,
-        )
-    latest = out_dir / "imit_v1_latest.pkl"
-    latest.write_bytes(p.read_bytes())
-    print(f"[imit] checkpoint -> {p}  (latest -> {latest})")
+        obs          = ja
