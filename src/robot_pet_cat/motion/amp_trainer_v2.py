@@ -70,6 +70,12 @@ class AMPTrainConfigV2:
     disc_batch_size: int = 4096
     disc_updates_per_iter: int = 1
     disc_pretrain_steps: int = 200
+    # Number of PPO iterations to run with style_reward_weight=0 so the
+    # policy learns to produce forward locomotion before AMP shapes the gait.
+    # During warmup the discriminator still trains on rollout data, so it
+    # arrives at the AMP phase already calibrated rather than cold.
+    # Set to 0 to disable (pure AMP from the start).
+    style_warmup_iters: int = 0
 
     env_name: str = "Go2JoystickFlatTerrain"
     num_envs: int = 4096
@@ -391,6 +397,16 @@ def train(cfg: AMPTrainConfigV2) -> None:
             unroll_length=cfg.ppo.unroll_length,
         )
 
+        # Style warmup: zero AMP contribution for the first style_warmup_iters
+        # iterations so PPO can discover locomotion before the discriminator
+        # starts shaping the gait. The discriminator still trains throughout,
+        # so it arrives at the post-warmup phase already calibrated.
+        _eff_sw = 0.0 if it < cfg.style_warmup_iters else cfg.style_reward_weight
+        traj["reward"] = (
+            cfg.task_reward_weight * traj["task_reward"]
+            + _eff_sw * traj["style_reward"]
+        )
+
         advs, returns = compute_gae(
             traj["reward"], traj["value"], traj["done"], last_v,
         )
@@ -454,9 +470,10 @@ def train(cfg: AMPTrainConfigV2) -> None:
             sps = total_env_steps / max(wall, 1e-6)
             r_task = float(jnp.mean(traj["task_reward"]))
             r_style = float(jnp.mean(traj["style_reward"]))
+            phase = "WARMUP" if it < cfg.style_warmup_iters else "AMP"
             print(
-                f"[amp-v2] it {it+1:>5d}  step {total_env_steps:>11,d}  "
-                f"r_task={r_task:+.3f} r_style={r_style:+.3f}  "
+                f"[amp-v2] it {it+1:>5d} [{phase}]  step {total_env_steps:>11,d}  "
+                f"r_task={r_task:+.3f} r_style={r_style:+.3f} sw={_eff_sw:.2f}  "
                 f"d_loss={float(d_loss):.3f}  "
                 f"ppo_loss={float(ppo_loss):+.3f}  "
                 f"{sps:>7,.0f} steps/s  wall={wall/60:.1f}m"

@@ -20,6 +20,12 @@ disc_learning_rate: 0.0001
 disc_batch_size: 4096
 disc_updates_per_iter: 1
 disc_pretrain_steps: 200
+# Pure-PPO warmup before AMP style shaping kicks in. During these iterations
+# style_reward_weight is forced to 0 so the policy finds basic forward
+# locomotion first. The discriminator trains throughout so it arrives at the
+# AMP phase already calibrated. 200 iters ~= 16M env steps at 4096 envs x 20
+# unroll -- enough for r_task to go clearly positive before AMP engages.
+style_warmup_iters: 200
 
 # --- Env -------------------------------------------------------------------
 env_name: Go2JoystickFlatTerrain
