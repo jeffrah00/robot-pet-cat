@@ -352,6 +352,12 @@ def train(cfg: ImitationTrainConfig) -> None:
             )                                            # (num_envs,)
             r_task = next_state.reward                   # (num_envs,)
             total_r = _task_w * r_task + _imit_w * r_imit
+            # Guard against physics NaN/Inf (e.g. from extreme RSI states).
+            # A NaN reward in a single env would corrupt the entire advantage
+            # batch, so we replace bad values with 0 (neutral, not penalizing).
+            total_r = jnp.where(jnp.isfinite(total_r), total_r, jnp.zeros_like(total_r))
+            r_task  = jnp.where(jnp.isfinite(r_task),  r_task,  jnp.zeros_like(r_task))
+            r_imit  = jnp.where(jnp.isfinite(r_imit),  r_imit,  jnp.zeros_like(r_imit))
 
             return (next_state, rng), {
                 "obs":            env_state.obs,
@@ -377,6 +383,11 @@ def train(cfg: ImitationTrainConfig) -> None:
         gamma = cfg.ppo.discounting
         lam   = cfg.ppo.gae_lambda
 
+        # Sanitize inputs -- physics NaN from extreme RSI states must not
+        # propagate into advantages and corrupt the PPO weight update.
+        rewards = jnp.where(jnp.isfinite(rewards), rewards, jnp.zeros_like(rewards))
+        values  = jnp.where(jnp.isfinite(values),  values,  jnp.zeros_like(values))
+
         def body(carry, t):
             adv = carry
             mask = 1.0 - dones[t]
@@ -400,6 +411,7 @@ def train(cfg: ImitationTrainConfig) -> None:
             log_prob = dist.log_prob(logits, raw_act)
             entropy  = dist.entropy(logits, jax.random.PRNGKey(0)).mean()
             ratio    = jnp.exp(log_prob - log_prob_old)
+            advs = jnp.where(jnp.isfinite(advs), advs, jnp.zeros_like(advs))
             adv_norm = (advs - advs.mean()) / (advs.std() + 1e-8)
             unclipped = ratio * adv_norm
             clipped = jnp.clip(ratio,
@@ -488,22 +500,4 @@ def train(cfg: ImitationTrainConfig) -> None:
         env_state = _do_rsi(env_state)
 
         total_env_steps += cfg.num_envs * cfg.ppo.unroll_length
-        if (it + 1) % cfg.log_interval_iters == 0:
-            wall = time.time() - start
-            sps  = total_env_steps / max(wall, 1e-6)
-            r_task = float(jnp.mean(traj["task_reward"]))
-            r_imit = float(jnp.mean(traj["imit_reward"]))
-            print(
-                f"[imit] it {it+1:>5d}  step {total_env_steps:>11,d}  "
-                f"r_task={r_task:+.3f} r_imit={r_imit:+.3f}  "
-                f"ppo_loss={float(ppo_loss):+.3f}  "
-                f"{sps:>7,.0f} steps/s  wall={wall/60:.1f}m"
-            )
-
-        if (it + 1) % cfg.checkpoint_interval_iters == 0:
-            _save_ckpt(cfg.checkpoint_dir, it + 1,
-                       policy_params, value_params, normalizer_params)
-
-    _save_ckpt(cfg.checkpoint_dir, cfg.ppo.total_iterations,
-               policy_params, value_params, normalizer_params)
-    print(f"[imit] done in {(time.time() - start) /
+       
