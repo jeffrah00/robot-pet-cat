@@ -248,7 +248,8 @@ def train(cfg: ImitationTrainConfig) -> None:
         '''Replace qpos/qvel for envs where rsi_mask=True.
         Works on mjx.Data and brax State objects that expose .replace().
         '''
-        ps = env_state.pipeline_state
+        _ps_attr = "pipeline_state" if hasattr(env_state, "pipeline_state") else "data"
+        ps = getattr(env_state, _ps_attr)
         nq_env = ps.qpos.shape[-1]
         nv_env = ps.qvel.shape[-1]
         # Clip reference arrays to env dims in case of shape mismatch.
@@ -257,7 +258,7 @@ def train(cfg: ImitationTrainConfig) -> None:
         new_qpos = jnp.where(rsi_mask_j[:, None], rq, ps.qpos)
         new_qvel = jnp.where(rsi_mask_j[:, None], rv, ps.qvel)
         new_ps = ps.replace(qpos=new_qpos, qvel=new_qvel)
-        return env_state.replace(pipeline_state=new_ps)
+        return env_state.replace(**{_ps_attr: new_ps})
 
     def _do_rsi(env_state):
         '''Python-level RSI: reseed a random fraction of envs from reference frames.'''
@@ -275,7 +276,8 @@ def train(cfg: ImitationTrainConfig) -> None:
         gf = clip_starts[ref_clip_idx] + ref_frame_idx  # (num_envs,)
         ref_qpos_np = all_qpos[gf]                       # (num_envs, nq)
 
-        nv_env = env_state.pipeline_state.qvel.shape[-1]
+        _ps3 = getattr(env_state, "pipeline_state", None) or env_state.data
+        nv_env = _ps3.qvel.shape[-1]
         if all_qvel is not None:
             ref_qvel_np = all_qvel[gf][:, :nv_env]
         else:
