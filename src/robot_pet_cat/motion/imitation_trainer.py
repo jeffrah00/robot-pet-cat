@@ -200,8 +200,15 @@ def train(cfg: ImitationTrainConfig) -> None:
     # 3. Networks + optimizer
     # -------------------------------------------------------------------------
     _shim_jax_for_brax()
+    # Augment observation_size to include the 2 phase-clock dims added to 'state'.
+    _obs_size_base = env.observation_size
+    if isinstance(_obs_size_base, dict):
+        _obs_size_aug = {k: (v + 2 if k == 'state' else v)
+                         for k, v in _obs_size_base.items()}
+    else:
+        _obs_size_aug = _obs_size_base + 2
     ppo_nets = ppo_networks.make_ppo_networks(
-        observation_size=env.observation_size,
+        observation_size=_obs_size_aug,
         action_size=env.action_size,
         policy_hidden_layer_sizes=tuple(cfg.ppo.policy_hidden_sizes),
         value_hidden_layer_sizes=tuple(cfg.ppo.value_hidden_sizes),
@@ -216,7 +223,7 @@ def train(cfg: ImitationTrainConfig) -> None:
         shape = (size,) if isinstance(size, int) else tuple(size)
         return specs.Array(shape, jnp.float32)
 
-    obs_size = env.observation_size
+    obs_size = _obs_size_aug  # includes +2 phase clock dims
     if isinstance(obs_size, dict):
         obs_spec = {k: _to_spec(v) for k, v in obs_size.items()}
     else:
@@ -456,7 +463,14 @@ def train(cfg: ImitationTrainConfig) -> None:
         (final_state, final_rng), traj = jax.lax.scan(
             step_fn, (env_state, rng), (ref_T, ref_ph_T), length=unroll_length,
         )
-        last_v = _value_predict(norm_params, value_params, final_state.obs)
+        # Bootstrap value: augment terminal obs with zero phase (next phase unknown).
+        _fobs = dict(final_state.obs)
+        _fobs['state'] = jnp.concatenate(
+            [_fobs['state'],
+             jnp.zeros((*_fobs['state'].shape[:-1], 2), dtype=jnp.float32)],
+            axis=-1,
+        )
+        last_v = _value_predict(norm_params, value_params, _fobs)
         return final_state, final_rng, traj, last_v
 
     @jax.jit
