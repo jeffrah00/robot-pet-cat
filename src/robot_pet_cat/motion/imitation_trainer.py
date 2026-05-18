@@ -337,9 +337,15 @@ def train(cfg: ImitationTrainConfig) -> None:
         def step_fn(carry, ref_qpos_t):
             env_state, rng = carry
             rng, k_act = jax.random.split(rng)
+            # Sanitize obs before network calls -- NaN obs from physics explosions
+            # produce NaN logits, log_probs, and values that corrupt the PPO loss.
+            safe_obs = jnp.where(
+                jnp.isfinite(env_state.obs), env_state.obs,
+                jnp.zeros_like(env_state.obs)
+            )
             act, log_prob, raw_act = _policy_act(norm_params, policy_params,
-                                                 env_state.obs, k_act)
-            v = _value_predict(norm_params, value_params, env_state.obs)
+                                                 safe_obs, k_act)
+            v = _value_predict(norm_params, value_params, safe_obs)
 
             q_policy = _get_qpos(env_state)              # (num_envs, nq)
             next_state = env.step(env_state, act)
@@ -360,7 +366,7 @@ def train(cfg: ImitationTrainConfig) -> None:
             r_imit  = jnp.where(jnp.isfinite(r_imit),  r_imit,  jnp.zeros_like(r_imit))
 
             return (next_state, rng), {
-                "obs":            env_state.obs,
+                "obs":            safe_obs,
                 "act":            act,
                 "log_prob":       log_prob,
                 "raw_act":        raw_act,
@@ -387,6 +393,7 @@ def train(cfg: ImitationTrainConfig) -> None:
         # propagate into advantages and corrupt the PPO weight update.
         rewards = jnp.where(jnp.isfinite(rewards), rewards, jnp.zeros_like(rewards))
         values  = jnp.where(jnp.isfinite(values),  values,  jnp.zeros_like(values))
+        last_v  = jnp.where(jnp.isfinite(last_v),  last_v,  jnp.zeros_like(last_v))
 
         def body(carry, t):
             adv = carry
@@ -404,10 +411,12 @@ def train(cfg: ImitationTrainConfig) -> None:
     @jax.jit
     def ppo_update(norm_params, policy_params, value_params, opt_state,
                    obs, act, log_prob_old, raw_act, advs, returns):
-        # Sanitize before loss_fn closes over advs/returns -- reassigning inside
-        # loss_fn makes Python treat them as unbound locals (UnboundLocalError).
-        advs    = jnp.where(jnp.isfinite(advs),    advs,    jnp.zeros_like(advs))
-        returns = jnp.where(jnp.isfinite(returns), returns, jnp.zeros_like(returns))
+        # Sanitize before loss_fn closes over these -- NaN obs/log_probs from
+        # physics explosions produce NaN logits and ratios, corrupting PPO loss.
+        obs          = jnp.where(jnp.isfinite(obs),          obs,          jnp.zeros_like(obs))
+        log_prob_old = jnp.where(jnp.isfinite(log_prob_old), log_prob_old, jnp.zeros_like(log_prob_old))
+        advs         = jnp.where(jnp.isfinite(advs),         advs,         jnp.zeros_like(advs))
+        returns      = jnp.where(jnp.isfinite(returns),      returns,      jnp.zeros_like(returns))
 
         def loss_fn(params):
             p_params, v_params = params
@@ -486,16 +495,4 @@ def train(cfg: ImitationTrainConfig) -> None:
         mb_size = n // cfg.ppo.num_minibatches
 
         for _epoch in range(cfg.ppo.num_updates_per_batch):
-            rng, k_perm = jax.random.split(rng)
-            perm = jax.random.permutation(k_perm, n)
-            for mb in range(cfg.ppo.num_minibatches):
-                idx = perm[mb * mb_size:(mb + 1) * mb_size]
-                obs_mb = jax.tree_util.tree_map(lambda x: x[idx], obs_flat)
-                policy_params, value_params, opt_state, ppo_loss, ppo_aux = ppo_update(
-                    normalizer_params, policy_params, value_params, opt_state,
-                    obs_mb, act_flat[idx], log_prob_flat[idx],
-                    raw_act_flat[idx], advs_flat[idx], returns_flat[idx],
-                )
-
-        # Update running obs normalizer.
-        
+            rng, k_perm = jax.random.split(rng
