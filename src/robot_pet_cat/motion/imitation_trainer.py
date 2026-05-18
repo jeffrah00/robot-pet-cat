@@ -203,7 +203,8 @@ def train(cfg: ImitationTrainConfig) -> None:
     # Augment observation_size to include the 2 phase-clock dims added to 'state'.
     _obs_size_base = env.observation_size
     if isinstance(_obs_size_base, dict):
-        _obs_size_aug = {k: (v + 2 if k == 'state' else v)
+        _obs_size_aug = {k: ((v[0] + 2,) + v[1:] if k == 'state' and isinstance(v, tuple) else
+                              v + 2     if k == 'state' else v)
                          for k, v in _obs_size_base.items()}
     else:
         _obs_size_aug = _obs_size_base + 2
