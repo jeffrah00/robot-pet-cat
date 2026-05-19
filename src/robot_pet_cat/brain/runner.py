@@ -169,6 +169,23 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
 
     callbacks = CallbackList([CuriosityUpdateCallback(), RewardBreakdownCallback()])
 
+    # Load .env from repo root so WANDB_API_KEY / WANDB_ENTITY are available
+    # even on fresh pods where `wandb login` hasn't been called.
+    _env_file = Path(__file__).parents[3] / ".env"
+    if _env_file.exists():
+        try:
+            from dotenv import load_dotenv as _load_dotenv
+            _load_dotenv(_env_file, override=False)
+        except ImportError:
+            # python-dotenv not installed -- parse manually (no extra deps)
+            with open(_env_file) as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if not _line or _line.startswith("#") or "=" not in _line:
+                        continue
+                    _k, _, _v = _line.partition("=")
+                    os.environ.setdefault(_k.strip(), _v.strip())
+
     # Optional wandb
     if cfg.wandb_project:
         try:
@@ -188,30 +205,4 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
                     "play_w": cfg.composite_cfg.play_w,
                     "hold_w": cfg.composite_cfg.hold_w,
                 },
-                reinit=True,
-            )
-        except Exception as e:  # don't kill a training run for a logging hiccup
-            print(f"[runner] wandb init failed: {e}")
-
-    model = PPO(
-        "MlpPolicy",
-        env,
-        n_steps=cfg.n_steps,
-        batch_size=cfg.batch_size,
-        n_epochs=cfg.n_epochs,
-        learning_rate=cfg.learning_rate,
-        ent_coef=cfg.ent_coef,
-        policy_kwargs=cfg.policy_kwargs,
-        device=cfg.device,
-        seed=cfg.seed,
-        verbose=1,
-        tensorboard_log=str(cfg.log_dir) if cfg.log_dir else None,
-    )
-
-    model.learn(total_timesteps=cfg.total_timesteps, callback=callbacks)
-
-    if cfg.save_model_to is not None:
-        cfg.save_model_to.parent.mkdir(parents=True, exist_ok=True)
-        model.save(str(cfg.save_model_to))
-
-    return model
+                reinit=True
