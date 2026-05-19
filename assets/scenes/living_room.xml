@@ -1,0 +1,96 @@
+<!--
+Minimal household scene for Tier 3 brain prototyping.
+
+Phase 4 in the ROADMAP is the full living room. This is the v0: just enough
+objects to give the brain's comfort + curiosity + play rewards something to
+latch onto. Semantic flags (elevated / soft / warm / play_target) are NOT
+encoded in the XML — they live in src/robot_pet_cat/scene/scene_state.py keyed
+on body / site name. That separation keeps the MJCF clean and lets us iterate
+on flag definitions without touching geometry.
+
+Layout (top-down, x to the right, y up, origin at room center):
+
+                    +y
+                     |
+                     |
+       window         |          couch
+       region   .-----+-----.   (elevated,
+       (warm)   |     |     |    soft)
+       -x ──────|─────o─────|──────── +x
+                |     |     |
+                |    ball   |
+                |  (play)   |
+                '-----+-----'
+                     |
+                     |
+                    -y
+
+The Go2 is NOT included in this file. At integration time, the cat MJCF is
+merged into this scene via <include file="path/to/go2.xml"/> with the spawn
+position chosen by whatever launches the env (usually 0,0,0.3 facing +x).
+-->
+
+<mujoco model="living_room_v0">
+
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+
+  <visual>
+    <map znear="0.01" zfar="50"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
+  <asset>
+    <material name="floor_mat"  rgba="0.85 0.83 0.80 1"/>
+    <material name="couch_mat"  rgba="0.45 0.25 0.18 1"/>
+    <material name="ball_mat"   rgba="0.80 0.20 0.20 1"/>
+    <material name="window_mat" rgba="1.00 0.95 0.55 0.35"/>
+  </asset>
+
+  <worldbody>
+    <light name="ceiling" pos="0 0 3" dir="0 0 -1" diffuse="0.7 0.7 0.7"/>
+
+    <!-- Floor. 10 m x 10 m, plenty of room to walk. -->
+    <geom name="floor"
+          type="plane"
+          size="5 5 0.1"
+          material="floor_mat"
+          contype="1" conaffinity="1"/>
+
+    <!-- Couch: low solid box, the cat can jump onto it.
+         x = +2 m, y = 0, height = 0.40 m, width 1.2 m x 0.6 m.
+         Semantic flags applied in scene_state.py: {elevated, soft}. -->
+    <body name="couch" pos="2.0 0.0 0.20">
+      <geom name="couch_geom"
+            type="box"
+            size="0.6 0.3 0.20"
+            material="couch_mat"
+            contype="1" conaffinity="1"
+            friction="0.9 0.005 0.0001"/>
+    </body>
+
+    <!-- Ball: free-floating, lightweight, kickable.
+         Spawned at y = +1 m so it's not on top of the cat at reset.
+         Semantic flags: {play_target}. -->
+    <body name="ball" pos="0.0 1.0 0.10">
+      <joint name="ball_joint" type="free"/>
+      <geom name="ball_geom"
+            type="sphere"
+            size="0.06"
+            material="ball_mat"
+            contype="1" conaffinity="1"
+            density="60"
+            friction="0.4 0.005 0.0001"/>
+    </body>
+
+    <!-- Window region: a flat tagged site on the floor at x = -2.
+         No collision geometry, just a region the comfort reward checks
+         distance-to. Semantic flags: {warm}. -->
+    <site name="window_region"
+          pos="-2.0 0.0 0.01"
+          size="1.0 1.0 0.005"
+          type="box"
+          material="window_mat"
+          group="1"/>
+  </worldbody>
+
+</mujoco>
