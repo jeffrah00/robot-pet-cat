@@ -1,0 +1,119 @@
+<!--
+  Living room v0 + Go2.
+
+  This is the scene PhysicsCat compiles when BrainEnv is run with a real
+  Tier 1 walker policy instead of the kinematic stub.
+
+  Structure mirrors scene_mjx_feetonly_flat_terrain.xml (which the AMP
+  training loop uses) but adds the Tier 3 household objects on top:
+
+    - couch (elevated, soft) at +x
+    - ball (play target, free joint) near origin
+    - window region (warm tag, visual only) at -x
+
+  The Go2 itself comes in via <include file="go2_mjx.xml"/>; that file is
+  fetched from mujoco_menagerie's unitree_go2/ and placed in the assets
+  dict at compile time by go2_base.get_assets().
+
+  Physics:
+    timestep=0.005 to match unitree_rl_mjlab's training config
+    (Mujoco physics 200 Hz, policy decimation 4 -> 50 Hz).
+
+  Sensors:
+    Walker policy needs base_ang_vel (gyro/IMU). go2_mjx.xml already
+    provides gyro, accelerometer, global_linvel, etc. We add the foot
+    framepos/framelinvel and IMU-site frame sensors that the AMP env
+    expects too, so the same scene can be used for both Tier 1 evaluation
+    and Tier 3 brain rollouts.
+-->
+<mujoco model="living_room_with_go2">
+  <include file="go2_mjx.xml"/>
+
+  <option timestep="0.005" gravity="0 0 -9.81" integrator="implicitfast"/>
+
+  <statistic center="0 0 0.3" extent="3.0" meansize=".05"/>
+
+  <visual>
+    <map znear="0.01" zfar="50"/>
+    <quality shadowsize="2048"/>
+    <headlight diffuse="0.55 0.55 0.55" ambient="0.35 0.35 0.35" specular="0 0 0"/>
+    <rgba haze="0.15 0.18 0.22 1"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.55 0.65 0.75" rgb2="0.05 0.08 0.12"
+             width="512" height="3072"/>
+    <texture type="2d" name="floor_tex" builtin="checker" mark="edge"
+             rgb1="0.86 0.83 0.78" rgb2="0.78 0.74 0.68" markrgb="0.55 0.5 0.45"
+             width="300" height="300"/>
+    <material name="floor_mat" texture="floor_tex" texuniform="true"
+              texrepeat="5 5" reflectance="0.05"/>
+    <material name="couch_mat"  rgba="0.45 0.25 0.18 1"/>
+    <material name="ball_mat"   rgba="0.80 0.20 0.20 1"/>
+    <material name="window_mat" rgba="1.00 0.95 0.55 0.35"/>
+  </asset>
+
+  <worldbody>
+    <light name="ceiling" pos="0 0 3" dir="0 0 -1" diffuse="0.7 0.7 0.7"/>
+
+    <!-- Floor: 10 m x 10 m, friction tuned to match Unitree training. -->
+    <geom name="floor"
+          type="plane"
+          size="5 5 0.05"
+          material="floor_mat"
+          condim="3"
+          friction="0.6"
+          contype="1" conaffinity="1"/>
+
+    <!-- Couch: elevated, soft. -->
+    <body name="couch" pos="2.0 0.0 0.20">
+      <geom name="couch_geom"
+            type="box"
+            size="0.6 0.3 0.20"
+            material="couch_mat"
+            contype="1" conaffinity="1"
+            friction="0.9 0.005 0.0001"/>
+    </body>
+
+    <!-- Ball: free-floating, lightweight, kickable. -->
+    <body name="ball" pos="0.0 1.0 0.10">
+      <joint name="ball_joint" type="free"/>
+      <geom name="ball_geom"
+            type="sphere"
+            size="0.06"
+            material="ball_mat"
+            contype="1" conaffinity="1"
+            density="60"
+            friction="0.4 0.005 0.0001"/>
+    </body>
+
+    <!-- Window region: visual tag only, no collision. -->
+    <site name="window_region"
+          pos="-2.0 0.0 0.01"
+          size="1.0 1.0 0.005"
+          type="box"
+          material="window_mat"
+          group="1"/>
+  </worldbody>
+
+  <!-- Sensors expected by the unitree_rl_mjlab walker policy (gyro is
+       already declared in go2_mjx.xml; we only add what's missing). -->
+  <sensor>
+    <velocimeter name="local_linvel"    site="imu"/>
+    <framezaxis  name="upvector"        objtype="site" objname="imu"/>
+    <framexaxis  name="forwardvector"   objtype="site" objname="imu"/>
+    <framepos    name="position"        objtype="site" objname="imu"/>
+
+    <framelinvel name="FR_foot_global_linvel" objtype="site" objname="FR_foot"/>
+    <framelinvel name="FL_foot_global_linvel" objtype="site" objname="FL_foot"/>
+    <framelinvel name="RR_foot_global_linvel" objtype="site" objname="RR_foot"/>
+    <framelinvel name="RL_foot_global_linvel" objtype="site" objname="RL_foot"/>
+    <framepos    name="FR_foot_pos"           objtype="site" objname="FR_foot"/>
+    <framepos    name="FL_foot_pos"           objtype="site" objname="FL_foot"/>
+    <framepos    name="RR_foot_pos"           objtype="site" objname="RR_foot"/>
+    <framepos    name="RL_foot_pos"           objtype="site" objname="RL_foot"/>
+  </sensor>
+
+  <include file="sensor_feet.xml"/>
+</mujoco>

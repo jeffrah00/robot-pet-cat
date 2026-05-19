@@ -66,6 +66,12 @@ from .rewards import (
 DEFAULT_SCENE_XML = (
     Path(__file__).resolve().parents[3] / "assets" / "scenes" / "living_room.xml"
 )
+DEFAULT_PHYSICS_SCENE_XML = (
+    Path(__file__).resolve().parents[3]
+    / "data"
+    / "go2_scenes"
+    / "living_room_with_go2.xml"
+)
 
 HOLD_ACTION = 0
 
@@ -207,6 +213,23 @@ class BrainEnvConfig:
     curiosity_beta: float = 0.2
     curiosity_reward_scale: float = 0.5
     curiosity_device: str = "cpu"
+    # Tier 1 backend. When False (default), Tier 1 is stubbed by
+    # KinematicCat (the legacy fast-iter path). When True, BrainEnv compiles
+    # the living-room-with-go2 scene and drives the Go2 with a trained
+    # walker policy (PhysicsCat). The mode switch is binary at construction
+    # time -- no live swapping.
+    use_physics_cat: bool = False
+    # Path to the merged scene XML used in physics mode. The default
+    # living_room_with_go2.xml lives under data/go2_scenes/ so its
+    # <include file="go2_mjx.xml"/> resolves through go2_base.get_assets().
+    physics_scene_xml: Path = DEFAULT_PHYSICS_SCENE_XML
+    # Path to the trained Unitree velocity walker policy. Accepts an
+    # .onnx file (preferred), a .pt RSL-RL checkpoint, or a directory
+    # containing either. Required when use_physics_cat=True.
+    walker_policy_path: Optional[Path] = None
+    # Spawn height for the Go2 base body at reset. 0.32 matches the
+    # init_state z in unitree_rl_mjlab's training config.
+    physics_spawn_z: float = 0.32
 
 
 # --------------------------------------------------------------------------- #
@@ -222,9 +245,32 @@ class BrainEnv:
 
         self.cfg = cfg or BrainEnvConfig()
         self._mujoco = mujoco
-        self.mj_model = mujoco.MjModel.from_xml_path(str(self.cfg.scene_xml))
-        self.mj_data = mujoco.MjData(self.mj_model)
-        self.cat = KinematicCat()
+
+        # Tier 1 backend: physics walker or kinematic stub.
+        if self.cfg.use_physics_cat:
+            if self.cfg.walker_policy_path is None:
+                raise ValueError(
+                    "use_physics_cat=True requires walker_policy_path "
+                    "(path to .onnx, .pt, or run directory)."
+                )
+            # Compile merged scene with menagerie's Go2 assets in-memory.
+            from robot_pet_cat.brain.physics_cat import PhysicsCat, PhysicsCatConfig
+            from robot_pet_cat.motion.go2_base import get_assets
+
+            xml_str = Path(self.cfg.physics_scene_xml).read_text()
+            assets = get_assets()
+            self.mj_model = mujoco.MjModel.from_xml_string(xml_str, assets=assets)
+            self.mj_data = mujoco.MjData(self.mj_model)
+            self.cat = PhysicsCat(
+                self.mj_model,
+                self.cfg.walker_policy_path,
+                PhysicsCatConfig(spawn_z=self.cfg.physics_spawn_z),
+            )
+        else:
+            self.mj_model = mujoco.MjModel.from_xml_path(str(self.cfg.scene_xml))
+            self.mj_data = mujoco.MjData(self.mj_model)
+            self.cat = KinematicCat()
+
         self.mood = Mood(MoodConfig())
         self.registry = SkillRegistry()
         self.mode_policy: Optional[ModePolicy] = self.cfg.mode_policy
@@ -285,13 +331,22 @@ class BrainEnv:
         return SKILL_NAMES
 
     def reset(self) -> dict:
-        self._mujoco.mj_resetData(self.mj_model, self.mj_data)
-        self._mujoco.mj_forward(self.mj_model, self.mj_data)
-        self.cat.reset(
-            xy=self.cfg.initial_cat_xy,
-            yaw=self.cfg.initial_cat_yaw,
-            body_height=self.cfg.initial_body_height,
-        )
+        if self.cfg.use_physics_cat:
+            # PhysicsCat owns mj_resetData / mj_forward and the leg pose.
+            self.cat.reset(
+                self.mj_data,
+                xy=self.cfg.initial_cat_xy,
+                yaw=self.cfg.initial_cat_yaw,
+                body_height=self.cfg.physics_spawn_z,
+            )
+        else:
+            self._mujoco.mj_resetData(self.mj_model, self.mj_data)
+            self._mujoco.mj_forward(self.mj_model, self.mj_data)
+            self.cat.reset(
+                xy=self.cfg.initial_cat_xy,
+                yaw=self.cfg.initial_cat_yaw,
+                body_height=self.cfg.initial_body_height,
+            )
         self.active_skill_name = None
         self.time_in_skill = 0.0
         self.t_sim = 0.0
@@ -392,19 +447,26 @@ class BrainEnv:
         # Get command this tick
         cmd = self._command_from_active_skill()
 
-        # Advance kinematic cat
-        self.cat.step(cmd, self.cfg.dt_s)
+        if self.cfg.use_physics_cat:
+            # Inject swat impulse BEFORE physics so mj_step integrates it
+            # naturally during the cat's many substeps. Real contacts and
+            # friction handle the rest -- no manual decay needed.
+            if self.active_skill_name == "swat":
+                self._maybe_apply_swat_impulse()
+            self.cat.step(self.mj_data, cmd, self.cfg.dt_s)
+        else:
+            # Kinematic stub: integrate the command directly, then fake
+            # ball motion via qvel injection + manual decay + mj_forward
+            # (no mj_step is called in this path).
+            self.cat.step(cmd, self.cfg.dt_s)
+            if self.active_skill_name == "swat":
+                self._maybe_apply_swat_impulse()
+            self._decay_ball_velocity(decay_per_s=0.9)
+            self._mujoco.mj_forward(self.mj_model, self.mj_data)
+
         self.time_in_skill += self.cfg.dt_s
         self.t_sim += self.cfg.dt_s
         self.episode_step += 1
-
-        # Swat-near-ball impulse (no-physics hack)
-        if self.active_skill_name == "swat":
-            self._maybe_apply_swat_impulse()
-        self._decay_ball_velocity(decay_per_s=0.9)
-
-        # Refresh mj_data so cvel reflects injected qvel
-        self._mujoco.mj_forward(self.mj_model, self.mj_data)
 
         # Update mood and (if present) mode policy
         self.mood.update(self.cfg.dt_s)
