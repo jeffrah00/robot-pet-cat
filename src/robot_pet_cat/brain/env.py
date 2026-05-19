@@ -21,6 +21,15 @@ Action space:
 Optional behavioral-attractor layer: if cfg.mode_policy is set, every step
 ticks the mode policy and incoming actions are masked to the active mode's
 permissible skills (actions outside the mask fall back to HOLD).
+
+Optional ICM curiosity (cfg.curiosity_enabled): the env instantiates a
+CuriosityReward, projects each obs dict to a fixed-shape feature vector
+(see brain/curiosity_feat.py), and:
+  - feeds the intrinsic reward into compute_composite_reward(curiosity_value=)
+  - exposes the per-step (feat_t, action, feat_tp1) Transition in
+    info["curiosity_transition"] for a trainer to batch into .update()
+With curiosity_enabled=False (default) the env is byte-identical in its
+reward dict to the pre-curiosity behavior.
 """
 
 from __future__ import annotations
@@ -41,13 +50,16 @@ from robot_pet_cat.skills.skill_policy import LocomotionCommand
 from robot_pet_cat.skills.skill_registry import SKILL_NAMES, SkillRegistry
 
 from .attractor import Attractor, ModePolicy
+from .curiosity_feat import CURIOSITY_OBS_DIM_V0, obs_dict_to_curiosity_vec
 from .mood import Mood, MoodConfig
 from .rewards import (
     CatState,
     ComfortReward,
     CompositeRewardConfig,
+    CuriosityReward,
     HoldBonusReward,
     PlayReward,
+    Transition,
     compute_composite_reward,
 )
 
@@ -159,6 +171,20 @@ class BrainEnvConfig:
     movable_bodies: tuple = ("ball",)
     swat_ball_impulse_mps: float = 0.8
     mode_policy: Optional[ModePolicy] = None
+    # ICM curiosity wiring. Off by default -- when enabled, the env owns a
+    # CuriosityReward, projects obs->feature each step, feeds intrinsic
+    # reward to the composer, and emits Transitions in info for a trainer
+    # to batch into .update(). curiosity_w stays controlled via
+    # CompositeRewardConfig.curiosity_w (so wiring vs. signal weight are
+    # separate knobs).
+    curiosity_enabled: bool = False
+    curiosity_seed: Optional[int] = None
+    curiosity_lr: float = 1.0e-3
+    curiosity_feature_dim: int = 64
+    curiosity_hidden: int = 128
+    curiosity_beta: float = 0.2
+    curiosity_reward_scale: float = 0.5
+    curiosity_device: str = "cpu"
 
 
 # --------------------------------------------------------------------------- #
@@ -186,6 +212,23 @@ class BrainEnv:
         self.r_play = PlayReward()
         self.r_hold = HoldBonusReward()
         self.r_cfg = CompositeRewardConfig()
+
+        # Optional ICM curiosity.
+        self.curiosity: Optional[CuriosityReward] = None
+        if self.cfg.curiosity_enabled:
+            self.curiosity = CuriosityReward(
+                obs_dim=CURIOSITY_OBS_DIM_V0,
+                n_actions=self.action_space_n,
+                feature_dim=self.cfg.curiosity_feature_dim,
+                hidden=self.cfg.curiosity_hidden,
+                beta=self.cfg.curiosity_beta,
+                reward_scale=self.cfg.curiosity_reward_scale,
+                lr=self.cfg.curiosity_lr,
+                device=self.cfg.curiosity_device,
+                seed=self.cfg.curiosity_seed,
+            )
+        self._prev_feat_vec: Optional[np.ndarray] = None
+
         # Runtime state
         self.active_skill_name: Optional[str] = None
         self.time_in_skill: float = 0.0
@@ -223,7 +266,13 @@ class BrainEnv:
         self.t_sim = 0.0
         self.episode_step = 0
         self.last_reward_breakdown = {}
-        return self._observe()
+        obs = self._observe()
+        # Seed the prev-feature buffer so the first step has a feat_t.
+        if self.curiosity is not None:
+            self._prev_feat_vec = obs_dict_to_curiosity_vec(obs)
+        else:
+            self._prev_feat_vec = None
+        return obs
 
     def step(self, action: int):
         """Returns (obs, reward, terminated, truncated, info)."""
@@ -278,6 +327,23 @@ class BrainEnv:
         if self.mode_policy is not None:
             self.mode_policy.tick(self.cfg.dt_s, self.mood)
 
+        # New observation
+        new_obs = self._observe()
+
+        # ICM: compute intrinsic reward (no-grad) and emit transition
+        curiosity_value = 0.0
+        if self.curiosity is not None and self._prev_feat_vec is not None:
+            feat_tp1 = obs_dict_to_curiosity_vec(new_obs)
+            curiosity_value = self.curiosity.intrinsic_reward(
+                self._prev_feat_vec, int(action), feat_tp1
+            )
+            info["curiosity_transition"] = Transition(
+                feat_t=self._prev_feat_vec.copy(),
+                action=int(action),
+                feat_tp1=feat_tp1.copy(),
+            )
+            self._prev_feat_vec = feat_tp1
+
         # Reward
         scene_state = self._extract_scene_state()
         cat_state = self._cat_state_for_rewards()
@@ -289,6 +355,7 @@ class BrainEnv:
             play=self.r_play,
             hold=self.r_hold,
             cfg=self.r_cfg,
+            curiosity_value=curiosity_value,
         )
         self.last_reward_breakdown = breakdown
         reward = breakdown["total"]
@@ -296,7 +363,7 @@ class BrainEnv:
         truncated = self.episode_step >= self.cfg.max_steps_per_episode
         terminated = False
         info["reward_breakdown"] = breakdown
-        return self._observe(), float(reward), terminated, truncated, info
+        return new_obs, float(reward), terminated, truncated, info
 
     # ------------------------------------------------------------------ #
     # Observation

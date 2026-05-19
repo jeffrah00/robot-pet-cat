@@ -39,6 +39,7 @@ motion = [
 
 brain = [
     "torch>=2.3",
+    "gymnasium>=1.0",
     "wandb>=0.17",
     "huggingface-hub>=0.24",
 ]
@@ -78,5 +79,4 @@ target-version = "py311"
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-ra"
+testpaths = ["te
