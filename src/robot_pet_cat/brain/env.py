@@ -1,0 +1,413 @@
+"""BrainEnv -- scaffold env for prototyping the Tier 3 brain without GPU.
+
+This env lets the brain (mode policy, body policy, gaze policy, reward
+streams) be developed and unit-tested WITHOUT a trained Tier 1 motor cortex
+or physical simulation:
+
+  - Tier 1 is stubbed by KinematicCat: a LocomotionCommand is integrated
+    directly into world-frame position over dt. No joint torques, no
+    contact, no balance.
+  - Tier 2 skills are dispatched normally via SkillRegistry.
+  - Mood drifts normally.
+  - Scene comes from assets/scenes/living_room.xml (cat is NOT included;
+    KinematicCat is the cat).
+  - Rewards via brain.rewards.compute_composite_reward.
+
+Action space:
+  - Index 0 is HOLD (pause-as-default): do not switch active_skill,
+    continue emitting the prior pose (or neutral stand if none).
+  - Indices 1..N map to SKILL_NAMES[i-1].
+
+Optional behavioral-attractor layer: if cfg.mode_policy is set, every step
+ticks the mode policy and incoming actions are masked to the active mode's
+permissible skills (actions outside the mask fall back to HOLD).
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+import numpy as np
+
+from robot_pet_cat.scene import (
+    LIVING_ROOM_V0_FLAGS,
+    SceneState,
+    extract_scene_state,
+)
+from robot_pet_cat.skills.skill_policy import LocomotionCommand
+from robot_pet_cat.skills.skill_registry import SKILL_NAMES, SkillRegistry
+
+from .attractor import Attractor, ModePolicy
+from .mood import Mood, MoodConfig
+from .rewards import (
+    CatState,
+    ComfortReward,
+    CompositeRewardConfig,
+    HoldBonusReward,
+    PlayReward,
+    compute_composite_reward,
+)
+
+DEFAULT_SCENE_XML = (
+    Path(__file__).resolve().parents[3] / "assets" / "scenes" / "living_room.xml"
+)
+
+HOLD_ACTION = 0
+
+
+# --------------------------------------------------------------------------- #
+# KinematicCat -- stub Tier 1
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class KinematicCat:
+    """Integrates LocomotionCommand into world-frame state. No physics."""
+
+    xy: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=np.float32))
+    yaw: float = 0.0
+    body_height: float = 0.30
+    last_speed: float = 0.0
+
+    def reset(
+        self,
+        xy: tuple = (0.0, 0.0),
+        yaw: float = 0.0,
+        body_height: float = 0.30,
+    ) -> None:
+        self.xy = np.asarray(xy, dtype=np.float32)
+        self.yaw = float(yaw)
+        self.body_height = float(body_height)
+        self.last_speed = 0.0
+
+    def step(self, cmd: LocomotionCommand, dt: float) -> None:
+        c, s = math.cos(self.yaw), math.sin(self.yaw)
+        vx_world = cmd.vx * c - cmd.vy * s
+        vy_world = cmd.vx * s + cmd.vy * c
+        self.xy = self.xy + np.asarray([vx_world, vy_world], dtype=np.float32) * dt
+        self.yaw = float(self.yaw + cmd.yaw_rate * dt)
+        self.yaw = (self.yaw + math.pi) % (2.0 * math.pi) - math.pi
+        self.body_height = float(cmd.body_height)
+        self.last_speed = float(math.hypot(cmd.vx, cmd.vy))
+
+
+# --------------------------------------------------------------------------- #
+# Default skill-target picker
+# --------------------------------------------------------------------------- #
+
+
+def _nearest_entity(scene_state: SceneState, cat_xy, **flag_filter):
+    candidates = scene_state.filter(**flag_filter)
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda e: float(np.hypot(e.pos_xyz[0] - cat_xy[0], e.pos_xyz[1] - cat_xy[1])),
+    )
+
+
+def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarray):
+    """Choose a sensible goal for a skill from scene + cat position."""
+    from robot_pet_cat.skills.look_at import LookAtGoal
+    from robot_pet_cat.skills.stretch import StretchGoal
+    from robot_pet_cat.skills.swat import SwatGoal
+    from robot_pet_cat.skills.walk_to import WalkToGoal
+
+    if skill_name in ("sit", "lie_down", "crouch"):
+        return None
+    if skill_name == "stretch":
+        return StretchGoal(duration_s=2.0)
+    play = _nearest_entity(scene_state, cat_xy, play_target=True)
+    elev = _nearest_entity(scene_state, cat_xy, elevated=True)
+    if skill_name == "walk_to":
+        if play is not None:
+            return WalkToGoal(target_xy=(float(play.pos_xyz[0]), float(play.pos_xyz[1])))
+        return WalkToGoal(target_xy=(0.0, 0.0))
+    if skill_name == "look_at":
+        if play is not None:
+            return LookAtGoal(point_xyz=tuple(float(v) for v in play.pos_xyz))
+        return LookAtGoal(point_xyz=(1.0, 0.0, 0.3))
+    if skill_name == "swat":
+        if play is not None:
+            return SwatGoal(point_xyz=tuple(float(v) for v in play.pos_xyz))
+        return SwatGoal(point_xyz=(1.0, 0.0, 0.1))
+    if skill_name == "jump_to":
+        from robot_pet_cat.skills.jump_to import JumpToGoal
+        if elev is not None:
+            return JumpToGoal(surface_xyz=tuple(float(v) for v in elev.pos_xyz))
+        return None
+    raise KeyError(f"no default goal recipe for skill {skill_name!r}")
+
+
+# --------------------------------------------------------------------------- #
+# BrainEnvConfig
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class BrainEnvConfig:
+    scene_xml: Path = DEFAULT_SCENE_XML
+    dt_s: float = 0.05
+    max_steps_per_episode: int = 400
+    initial_cat_xy: tuple = (0.0, 0.0)
+    initial_cat_yaw: float = 0.0
+    initial_body_height: float = 0.30
+    flag_config: Optional[dict] = None
+    movable_bodies: tuple = ("ball",)
+    swat_ball_impulse_mps: float = 0.8
+    mode_policy: Optional[ModePolicy] = None
+
+
+# --------------------------------------------------------------------------- #
+# BrainEnv
+# --------------------------------------------------------------------------- #
+
+
+class BrainEnv:
+    """Scaffold env: scene + KinematicCat + skills + mood + rewards."""
+
+    def __init__(self, cfg: Optional[BrainEnvConfig] = None) -> None:
+        import mujoco  # lazy import
+
+        self.cfg = cfg or BrainEnvConfig()
+        self._mujoco = mujoco
+        self.mj_model = mujoco.MjModel.from_xml_path(str(self.cfg.scene_xml))
+        self.mj_data = mujoco.MjData(self.mj_model)
+        self.cat = KinematicCat()
+        self.mood = Mood(MoodConfig())
+        self.registry = SkillRegistry()
+        self.mode_policy: Optional[ModePolicy] = self.cfg.mode_policy
+        self.flag_config = self.cfg.flag_config or LIVING_ROOM_V0_FLAGS
+        self.movable_bodies = set(self.cfg.movable_bodies)
+        self.r_comfort = ComfortReward()
+        self.r_play = PlayReward()
+        self.r_hold = HoldBonusReward()
+        self.r_cfg = CompositeRewardConfig()
+        # Runtime state
+        self.active_skill_name: Optional[str] = None
+        self.time_in_skill: float = 0.0
+        self.t_sim: float = 0.0
+        self.episode_step: int = 0
+        self.last_reward_breakdown: dict = {}
+        # Joint id lookup for free-joint bodies
+        self._free_joint_qvel_offset: dict = {}
+        for body_name in self.movable_bodies:
+            jname = self._find_free_joint_for_body(body_name)
+            if jname is not None:
+                jid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, jname)
+                if jid >= 0:
+                    self._free_joint_qvel_offset[body_name] = int(self.mj_model.jnt_dofadr[jid])
+
+    @property
+    def action_space_n(self) -> int:
+        """0 = hold; 1..N = skill[i-1]."""
+        return 1 + len(self.registry)
+
+    @property
+    def skill_names(self):
+        return SKILL_NAMES
+
+    def reset(self) -> dict:
+        self._mujoco.mj_resetData(self.mj_model, self.mj_data)
+        self._mujoco.mj_forward(self.mj_model, self.mj_data)
+        self.cat.reset(
+            xy=self.cfg.initial_cat_xy,
+            yaw=self.cfg.initial_cat_yaw,
+            body_height=self.cfg.initial_body_height,
+        )
+        self.active_skill_name = None
+        self.time_in_skill = 0.0
+        self.t_sim = 0.0
+        self.episode_step = 0
+        self.last_reward_breakdown = {}
+        return self._observe()
+
+    def step(self, action: int):
+        """Returns (obs, reward, terminated, truncated, info)."""
+        info: dict = {}
+        if not 0 <= action < self.action_space_n:
+            raise ValueError(f"action {action} out of range [0, {self.action_space_n})")
+
+        # Optional mode-mask. If active mode forbids the chosen skill, fall back to HOLD.
+        if self.mode_policy is not None:
+            mask = self.mode_policy.allowed_action_mask(self.action_space_n, SKILL_NAMES)
+            if not bool(mask[action]):
+                info["dispatched_raw"] = (
+                    "hold" if action == HOLD_ACTION else SKILL_NAMES[action - 1]
+                )
+                info["dispatch_masked"] = True
+                action = HOLD_ACTION
+
+        if action == HOLD_ACTION:
+            new_skill_name = None
+            info["dispatched"] = "hold"
+        else:
+            new_skill_name = SKILL_NAMES[action - 1]
+            info["dispatched"] = new_skill_name
+
+        # Skill switch
+        if new_skill_name is not None and new_skill_name != self.active_skill_name:
+            if self.active_skill_name is not None:
+                self.registry.reset(self.active_skill_name)
+            self.registry.reset(new_skill_name)
+            self.active_skill_name = new_skill_name
+            self.time_in_skill = 0.0
+
+        # Get command this tick
+        cmd = self._command_from_active_skill()
+
+        # Advance kinematic cat
+        self.cat.step(cmd, self.cfg.dt_s)
+        self.time_in_skill += self.cfg.dt_s
+        self.t_sim += self.cfg.dt_s
+        self.episode_step += 1
+
+        # Swat-near-ball impulse (no-physics hack)
+        if self.active_skill_name == "swat":
+            self._maybe_apply_swat_impulse()
+        self._decay_ball_velocity(decay_per_s=0.9)
+
+        # Refresh mj_data so cvel reflects injected qvel
+        self._mujoco.mj_forward(self.mj_model, self.mj_data)
+
+        # Update mood and (if present) mode policy
+        self.mood.update(self.cfg.dt_s)
+        if self.mode_policy is not None:
+            self.mode_policy.tick(self.cfg.dt_s, self.mood)
+
+        # Reward
+        scene_state = self._extract_scene_state()
+        cat_state = self._cat_state_for_rewards()
+        breakdown = compute_composite_reward(
+            scene_state,
+            cat_state,
+            self.mood,
+            comfort=self.r_comfort,
+            play=self.r_play,
+            hold=self.r_hold,
+            cfg=self.r_cfg,
+        )
+        self.last_reward_breakdown = breakdown
+        reward = breakdown["total"]
+
+        truncated = self.episode_step >= self.cfg.max_steps_per_episode
+        terminated = False
+        info["reward_breakdown"] = breakdown
+        return self._observe(), float(reward), terminated, truncated, info
+
+    # ------------------------------------------------------------------ #
+    # Observation
+    # ------------------------------------------------------------------ #
+
+    def _observe(self) -> dict:
+        scene_state = self._extract_scene_state()
+        obs = {
+            "mood": self.mood.state.copy(),
+            "cat_xy": self.cat.xy.copy(),
+            "cat_yaw": float(self.cat.yaw),
+            "cat_body_height": float(self.cat.body_height),
+            "cat_speed": float(self.cat.last_speed),
+            "active_skill_idx": (
+                self.registry.index_of(self.active_skill_name)
+                if self.active_skill_name is not None
+                else -1
+            ),
+            "time_in_skill": float(self.time_in_skill),
+            "t_sim": float(self.t_sim),
+            "scene_state": scene_state,
+        }
+        if self.mode_policy is not None:
+            obs["mode"] = self.mode_policy.current_mode.value
+            obs["action_mask"] = self.mode_policy.allowed_action_mask(
+                self.action_space_n, SKILL_NAMES
+            )
+        return obs
+
+    def _extract_scene_state(self) -> SceneState:
+        return extract_scene_state(
+            self.mj_model,
+            self.mj_data,
+            flag_config=self.flag_config,
+            movable_bodies=self.movable_bodies,
+        )
+
+    def _cat_state_for_rewards(self) -> CatState:
+        return CatState(
+            xy=self.cat.xy.copy(),
+            yaw=self.cat.yaw,
+            body_height=self.cat.body_height,
+            speed=self.cat.last_speed,
+            active_skill=self.active_skill_name,
+            time_in_skill=self.time_in_skill,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Skill dispatch
+    # ------------------------------------------------------------------ #
+
+    def _command_from_active_skill(self) -> LocomotionCommand:
+        if self.active_skill_name is None:
+            return LocomotionCommand(gait="stand")
+        scene_state = self._extract_scene_state()
+        goal = pick_default_goal(self.active_skill_name, scene_state, self.cat.xy)
+        skill_obs = self._skill_obs_dict()
+        try:
+            return self.registry.step(self.active_skill_name, skill_obs, goal)
+        except NotImplementedError:
+            # jump_to until trained. Fall back to neutral stand and clear active.
+            self.active_skill_name = None
+            self.time_in_skill = 0.0
+            return LocomotionCommand(gait="stand")
+
+    def _skill_obs_dict(self) -> dict:
+        return {
+            "root_xy": self.cat.xy.copy(),
+            "root_yaw": float(self.cat.yaw),
+            "t_sim": float(self.t_sim),
+        }
+
+    # ------------------------------------------------------------------ #
+    # Ball state hacks
+    # ------------------------------------------------------------------ #
+
+    def _maybe_apply_swat_impulse(self) -> None:
+        scene_state = self._extract_scene_state()
+        for ent in scene_state.filter(play_target=True):
+            if ent.name not in self._free_joint_qvel_offset:
+                continue
+            dx = float(ent.pos_xyz[0] - self.cat.xy[0])
+            dy = float(ent.pos_xyz[1] - self.cat.xy[1])
+            d = float(math.hypot(dx, dy))
+            if d > 0.4 or d < 1e-3:
+                continue
+            offset = self._free_joint_qvel_offset[ent.name]
+            nx, ny = dx / d, dy / d
+            self.mj_data.qvel[offset + 0] = nx * self.cfg.swat_ball_impulse_mps
+            self.mj_data.qvel[offset + 1] = ny * self.cfg.swat_ball_impulse_mps
+
+    def _decay_ball_velocity(self, decay_per_s: float) -> None:
+        decay = decay_per_s ** self.cfg.dt_s
+        for offset in self._free_joint_qvel_offset.values():
+            self.mj_data.qvel[offset : offset + 3] *= decay
+
+    # ------------------------------------------------------------------ #
+    # MuJoCo helpers
+    # ------------------------------------------------------------------ #
+
+    def _find_free_joint_for_body(self, body_name: str):
+        mujoco = self._mujoco
+        bid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        if bid < 0:
+            return None
+        njnt = int(self.mj_model.njnt)
+        for jid in range(njnt):
+            if self.mj_model.jnt_bodyid[jid] != bid:
+                continue
+            if self.mj_model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+                continue
+            n = mujoco.mj_id2name(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, jid)
+            return n if n else None
+        return None
