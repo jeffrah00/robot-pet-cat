@@ -422,6 +422,51 @@ class PhysicsCat:
             vadr = self._base_qvel_adr
             self._last_speed = float(math.hypot(mj_data.qvel[vadr + 0], mj_data.qvel[vadr + 1]))
 
+    def apply_launch_impulse(
+        self,
+        mj_data,
+        target_xyz: tuple,
+    ) -> None:
+        """One-shot: set base qvel to a ballistic arc aimed at target_xyz.
+
+        Called by BrainEnv when JumpTo.launch_requested is True. After this
+        call BrainEnv's normal cat.step() continues, integrating the impulse
+        through all physics substeps this tick and onward.
+
+        Physics:
+          v_z = sqrt(2*g*(dz + margin))  -- enough to clear platform top
+          v_xy = direction * (d_xy / t_land)  -- land approximately on target
+        """
+        g = 9.81
+        adr = self._base_qpos_adr
+        vadr = self._base_qvel_adr
+
+        cur_x = float(mj_data.qpos[adr + 0])
+        cur_y = float(mj_data.qpos[adr + 1])
+        cur_z = float(mj_data.qpos[adr + 2])
+
+        tx, ty, tz = target_xyz
+        dz = max(0.0, tz - cur_z) + 0.08  # 8 cm clearance above platform
+        vz = math.sqrt(2.0 * g * dz)
+        t_peak = vz / g
+        t_land = 2.0 * t_peak  # approximate total time of flight
+
+        dx, dy = tx - cur_x, ty - cur_y
+        d_xy = math.hypot(dx, dy)
+        if d_xy > 1e-3:
+            vx = dx / max(t_land, 0.01)
+            vy = dy / max(t_land, 0.01)
+        else:
+            vx, vy = 0.0, 0.0
+
+        mj_data.qvel[vadr + 0] = vx
+        mj_data.qvel[vadr + 1] = vy
+        mj_data.qvel[vadr + 2] = vz
+        # Zero angular velocity for a clean arc.
+        mj_data.qvel[vadr + 3] = 0.0
+        mj_data.qvel[vadr + 4] = 0.0
+        mj_data.qvel[vadr + 5] = 0.0
+
     def _sensor_adr(self, name: str, required: bool = True) -> int:
         mujoco = self._mujoco
         sid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_SENSOR, name)

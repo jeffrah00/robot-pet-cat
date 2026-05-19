@@ -1,4 +1,4 @@
-"""Behavioral attractors — v2 architectural layer between mood and skills.
+"""Behavioral attractors -- v2 architectural layer between mood and skills.
 
 Per docs/brain_design_v2.md: cats don't pick a skill every two seconds. They
 enter persistent *modes* (resting, observing, stalking, playing, grooming,
@@ -9,6 +9,7 @@ This module exposes:
 
   - `Attractor` enum: the six behavioral modes
   - `MODE_SKILLS` table: mode -> tuple of permissible skill names
+  - `MODE_HARD_BLOCKED` table: mode -> set of skills that NEVER soft-pass
   - `ModePolicy`: a low-frequency mode-transition policy
 
 `ModePolicy.tick(dt, mood)` is called every step but only considers a
@@ -63,12 +64,22 @@ class Attractor(str, Enum):
 # `walk_to` and `look_at` appear in many modes because they're general-purpose
 # competence skills, not character-defining.
 MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
-    Attractor.RESTING: ("sit", "lie_down", "look_at"),
+    Attractor.RESTING:   ("sit", "lie_down", "look_at"),
     Attractor.OBSERVING: ("look_at", "walk_to"),
-    Attractor.STALKING: ("crouch", "walk_to", "look_at"),
-    Attractor.PLAYING: ("swat", "walk_to", "jump_to"),
-    Attractor.GROOMING: ("sit", "lie_down", "look_at"),
+    Attractor.STALKING:  ("crouch", "walk_to", "look_at"),
+    Attractor.PLAYING:   ("swat", "walk_to", "jump_to"),
+    Attractor.GROOMING:  ("sit", "lie_down", "look_at"),
     Attractor.EXPLORING: ("walk_to", "look_at"),
+}
+
+# Skills that must NEVER execute in a mode, even when the mode_soft_pass coin
+# flip in BrainEnv would normally let them through. Locomotion skills break the
+# semantic contract of resting/grooming modes too severely to allow even
+# occasionally. Other modes keep the default soft-pass behavior (stochastic
+# cat character per the cats-are-stochastic design memory).
+MODE_HARD_BLOCKED: dict[Attractor, frozenset[str]] = {
+    Attractor.RESTING:  frozenset({"walk_to", "jump_to"}),
+    Attractor.GROOMING: frozenset({"walk_to", "jump_to"}),
 }
 
 
@@ -77,7 +88,9 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
 # --------------------------------------------------------------------------- #
 
 
-def _mode_bias_from_mood(curiosity_w: float, comfort_w: float, play_w: float) -> dict[Attractor, float]:
+def _mode_bias_from_mood(
+    curiosity_w: float, comfort_w: float, play_w: float
+) -> dict[Attractor, float]:
     """Each mode's transition logit is a weighted blend of the three mood weights.
 
     Coefficients chosen so:
@@ -90,11 +103,11 @@ def _mode_bias_from_mood(curiosity_w: float, comfort_w: float, play_w: float) ->
     statistics on real cats once we have telemetry.
     """
     return {
-        Attractor.RESTING: 1.0 * comfort_w,
+        Attractor.RESTING:   1.0 * comfort_w,
         Attractor.OBSERVING: 0.5 * curiosity_w + 0.2 * play_w,
-        Attractor.STALKING: 0.5 * curiosity_w + 0.6 * play_w,
-        Attractor.PLAYING: 1.0 * play_w,
-        Attractor.GROOMING: 0.3 * comfort_w,
+        Attractor.STALKING:  0.5 * curiosity_w + 0.6 * play_w,
+        Attractor.PLAYING:   1.0 * play_w,
+        Attractor.GROOMING:  0.3 * comfort_w,
         Attractor.EXPLORING: 1.0 * curiosity_w,
     }
 
@@ -177,17 +190,24 @@ class ModePolicy:
     def allowed_skills(self) -> tuple[str, ...]:
         return MODE_SKILLS[self.current_mode]
 
+    def is_hard_blocked(self, skill_name: str) -> bool:
+        """True if skill_name must not execute in the current mode even under
+        the mode_soft_pass gate. See MODE_HARD_BLOCKED for the full table."""
+        blocked = MODE_HARD_BLOCKED.get(self.current_mode, frozenset())
+        return skill_name in blocked
+
     def allowed_action_mask(
         self, n_actions: int, skill_names: tuple[str, ...]
     ) -> np.ndarray:
         """Boolean mask of shape (n_actions,).
 
-        Index 0 (HOLD) is always True — pause-as-default is allowed in every
+        Index 0 (HOLD) is always True -- pause-as-default is allowed in every
         mode. Indices 1..N correspond to skill_names[0..N-1] and are True iff
         the skill is in the active mode's MODE_SKILLS entry.
 
         BrainEnv uses this to clip incoming actions: if a brain emits an
-        action outside the mask, the env falls back to HOLD.
+        action outside the mask, the env falls back to HOLD (unless soft-pass
+        lets it through -- see also is_hard_blocked for the exception).
         """
         if n_actions < 1 + len(skill_names):
             raise ValueError(

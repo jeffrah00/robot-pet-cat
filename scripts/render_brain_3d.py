@@ -73,13 +73,13 @@ MOOD_NAMES = [
 
 
 SCRIPTED_SCHEDULE_S = [
-    (0.0, "walk_to"),
-    (4.0, "look_at"),
-    (8.0, "swat"),
-    (12.0, "walk_to"),
-    (16.0, "sit"),
-    (20.0, "stretch"),
-    (24.0, "walk_to"),
+    (0.0,  "walk_to"),   # cat explores the room
+    (5.0,  "look_at"),   # cat spots the ball
+    (9.0,  "swat"),      # cat bats the ball
+    (13.0, "walk_to"),   # cat moves toward the cat tree
+    (17.0, "jump_to"),   # cat jumps onto platform!
+    (24.0, "sit"),       # cat sits on the platform
+    (28.0, "stretch"),   # morning stretch up top
 ]
 
 
@@ -161,7 +161,7 @@ def main() -> int:
         action="store_true",
         help="Use the hand-coded action schedule instead of a PPO model.",
     )
-    p.add_argument("--steps", type=int, default=400)
+    p.add_argument("--steps", type=int, default=600)
     p.add_argument("--out", default="renders/brain_3d.mp4")
     p.add_argument("--width-main", type=int, default=960)
     p.add_argument("--height-main", type=int, default=640)
@@ -169,7 +169,7 @@ def main() -> int:
     p.add_argument("--height-eye", type=int, default=320)
     p.add_argument("--fps", type=int, default=20)
     p.add_argument(
-        "--initial-xy", nargs=2, type=float, default=[-1.0, -0.5],
+        "--initial-xy", nargs=2, type=float, default=[0.5, 0.5],
         help="Spawn xy of the cat in the room.",
     )
     p.add_argument(

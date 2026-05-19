@@ -405,7 +405,19 @@ class BrainEnv:
                 info["dispatched_raw"] = (
                     "hold" if action == HOLD_ACTION else SKILL_NAMES[action - 1]
                 )
-                if float(self.cfg.mode_soft_pass) >= 1.0:
+                # Hard-blocked skills ignore soft-pass entirely. A cat in
+                # RESTING mode never walks across the room regardless of the
+                # stochastic gate -- that breaks mode semantics completely.
+                _skill_name = SKILL_NAMES[action - 1] if action != HOLD_ACTION else None
+                _hard_blocked = (
+                    _skill_name is not None
+                    and self.mode_policy.is_hard_blocked(_skill_name)
+                )
+                if _hard_blocked:
+                    info["dispatch_masked"] = True
+                    info["dispatch_hard_blocked"] = True
+                    action = HOLD_ACTION
+                elif float(self.cfg.mode_soft_pass) >= 1.0:
                     # Soft-pass disabled the gate entirely
                     info["dispatch_masked"] = False
                     info["dispatch_soft_passed"] = True
@@ -457,6 +469,8 @@ class BrainEnv:
             # friction handle the rest -- no manual decay needed.
             if self.active_skill_name == "swat":
                 self._maybe_apply_swat_impulse()
+            if self.active_skill_name == "jump_to":
+                self._maybe_apply_jump_impulse()
             self.cat.step(self.mj_data, cmd, self.cfg.dt_s)
         else:
             # Kinematic stub: integrate the command directly, then fake
@@ -584,11 +598,27 @@ class BrainEnv:
             "root_xy": self.cat.xy.copy(),
             "root_yaw": float(self.cat.yaw),
             "t_sim": float(self.t_sim),
+            "dt": float(self.cfg.dt_s),
         }
 
     # ------------------------------------------------------------------ #
     # Ball state hacks
     # ------------------------------------------------------------------ #
+
+    def _maybe_apply_jump_impulse(self) -> None:
+        """Intercept JumpTo LAUNCH phase: inject ballistic impulse into Go2 base."""
+        from robot_pet_cat.skills.jump_to import JumpTo
+        skill = self.registry.get("jump_to")
+        if not isinstance(skill, JumpTo) or not skill.launch_requested:
+            return
+        if self.cfg.use_physics_cat:
+            self.cat.apply_launch_impulse(self.mj_data, skill.target_xyz)
+        else:
+            # KinematicCat: teleport directly onto the platform.
+            tx, ty, tz = skill.target_xyz
+            self.cat.xy = np.array([tx, ty], dtype=np.float32)
+            self.cat.body_height = tz
+        skill.advance_to_airborne()
 
     def _maybe_apply_swat_impulse(self) -> None:
         scene_state = self._extract_scene_state()
