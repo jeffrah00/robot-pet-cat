@@ -218,4 +218,19 @@ def main() -> None:
         curiosity_hidden=16,
         max_steps_per_episode=args.steps + 1,  # don't truncate mid-render
         decision_period_min_steps=args.decision_period_min,
-        decision_period_max_steps=arg
+        decision_period_max_steps=args.decision_period_max,
+    )
+    env = make_brain_gym_env(cfg)
+    print(f"[render_brain] loading {args.checkpoint}")
+    model = PPO.load(args.checkpoint, env=env)
+
+    print(f"[render_brain] rolling out {args.steps} steps (deterministic={args.deterministic})")
+    history = collect_trajectory(model, env, n_steps=args.steps, deterministic=args.deterministic)
+
+    print(f"[render_brain] encoding to {args.out}")
+    render_to_mp4(history, Path(args.out), fps=args.fps, trail_len=args.trail)
+    print(f"[render_brain] done -> {args.out}")
+
+
+if __name__ == "__main__":
+    main()
