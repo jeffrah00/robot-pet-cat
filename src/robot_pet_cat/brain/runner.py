@@ -205,4 +205,30 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
                     "play_w": cfg.composite_cfg.play_w,
                     "hold_w": cfg.composite_cfg.hold_w,
                 },
-                reinit=True
+                reinit=True,
+            )
+        except Exception as e:  # don't kill a training run for a logging hiccup
+            print(f"[runner] wandb init failed: {e}")
+
+    model = PPO(
+        "MlpPolicy",
+        env,
+        n_steps=cfg.n_steps,
+        batch_size=cfg.batch_size,
+        n_epochs=cfg.n_epochs,
+        learning_rate=cfg.learning_rate,
+        ent_coef=cfg.ent_coef,
+        policy_kwargs=cfg.policy_kwargs,
+        device=cfg.device,
+        seed=cfg.seed,
+        verbose=1,
+        tensorboard_log=str(cfg.log_dir) if cfg.log_dir else None,
+    )
+
+    model.learn(total_timesteps=cfg.total_timesteps, callback=callbacks)
+
+    if cfg.save_model_to is not None:
+        cfg.save_model_to.parent.mkdir(parents=True, exist_ok=True)
+        model.save(str(cfg.save_model_to))
+
+    return model
