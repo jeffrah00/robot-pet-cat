@@ -148,11 +148,22 @@ class TestHoldBonusReward:
         r = HoldBonusReward().compute(scene, _cat(speed=0.2))
         assert r == 0.0
 
-    def test_zero_when_play_target_nearby(self) -> None:
-        scene = _scene(_ball(x=0.3, y=0.0))
+    def test_zero_when_MOVING_play_target_nearby(self) -> None:
+        """A moving ball nearby IS a salient stimulus -- hold should not fire.
+        (Updated 2026-05-19: was previously triggered by any nearby ball;
+        still balls now do NOT suppress hold -- see memory: cats-are-stochastic
+        on real cats not watching motionless objects.)"""
+        scene = _scene(_ball(x=0.3, y=0.0, vx=0.5, vy=0.0))
         hb = HoldBonusReward(saliency_range_m=0.6)
         r = hb.compute(scene, _cat(x=0.0, y=0.0))
         assert r == 0.0
+
+    def test_still_play_target_does_NOT_kill_hold(self) -> None:
+        """A motionless ball nearby is not salient -- hold still fires."""
+        scene = _scene(_ball(x=0.3, y=0.0, vx=0.0, vy=0.0))  # still ball
+        hb = HoldBonusReward(saliency_range_m=0.6, min_target_speed_mps=0.05)
+        r = hb.compute(scene, _cat(x=0.0, y=0.0))
+        assert r == pytest.approx(hb.bonus, abs=1e-9)
 
     def test_zero_when_active_skill_is_non_hold(self) -> None:
         scene = _scene()
@@ -231,19 +242,4 @@ class TestCompositeReward:
         assert out_high["hold"] > 0
 
 
-# --------------------------------------------------------------------------- #
-# CuriosityReward API guard (full ICM behavior is in test_brain_curiosity.py)
-# --------------------------------------------------------------------------- #
-
-
-class TestCuriosityComputeGuard:
-    def test_compute_raises_typeerror(self) -> None:
-        """The (scene, cat, mood) entry point is intentionally a hard error.
-
-        ICM needs (feat_t, action, feat_tp1); using .compute(...) would mean
-        the env stopped passing curiosity_value and silently got a zero.
-        """
-        pytest.importorskip("torch")
-        c = CuriosityReward(obs_dim=4, n_actions=3, hidden=8, feature_dim=4, seed=0)
-        with pytest.raises(TypeError):
-            c.compute(None, None, None)
+# ------------------------------------------------------

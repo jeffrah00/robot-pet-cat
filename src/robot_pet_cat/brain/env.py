@@ -171,6 +171,14 @@ class BrainEnvConfig:
     movable_bodies: tuple = ("ball",)
     swat_ball_impulse_mps: float = 0.8
     mode_policy: Optional[ModePolicy] = None
+    # Soft action mask under attractor modes. Probability of letting an
+    # out-of-mode action through INSTEAD of forcing it to HOLD. 0.0 ==
+    # original hard-mask behavior (v0). ~0.3 lets the cat occasionally
+    # do something off-mode -- per memory cats-are-stochastic, this is
+    # more cat-like than a hard gate.
+    mode_soft_pass: float = 0.3
+    # RNG seed for the mask-softening coin flip. None => use env state.
+    mode_soft_rng_seed: Optional[int] = None
     # ICM curiosity wiring. Off by default -- when enabled, the env owns a
     # CuriosityReward, projects obs->feature each step, feeds intrinsic
     # reward to the composer, and emits Transitions in info for a trainer
@@ -235,6 +243,9 @@ class BrainEnv:
         self.t_sim: float = 0.0
         self.episode_step: int = 0
         self.last_reward_breakdown: dict = {}
+        # Soft-mask RNG. Independent of policy stochasticity so the
+        # softened mask is reproducible per env seed.
+        self._mode_soft_rng = np.random.default_rng(self.cfg.mode_soft_rng_seed)
         # Joint id lookup for free-joint bodies
         self._free_joint_qvel_offset: dict = {}
         for body_name in self.movable_bodies:
@@ -280,15 +291,27 @@ class BrainEnv:
         if not 0 <= action < self.action_space_n:
             raise ValueError(f"action {action} out of range [0, {self.action_space_n})")
 
-        # Optional mode-mask. If active mode forbids the chosen skill, fall back to HOLD.
+        # Optional mode-mask. If active mode forbids the chosen skill, fall
+        # back to HOLD -- but only with probability (1 - mode_soft_pass), so
+        # the cat occasionally still does an off-mode action. See memory
+        # cats-are-stochastic: a hard gate is wrong for cat-vibe.
         if self.mode_policy is not None:
             mask = self.mode_policy.allowed_action_mask(self.action_space_n, SKILL_NAMES)
             if not bool(mask[action]):
                 info["dispatched_raw"] = (
                     "hold" if action == HOLD_ACTION else SKILL_NAMES[action - 1]
                 )
-                info["dispatch_masked"] = True
-                action = HOLD_ACTION
+                if float(self.cfg.mode_soft_pass) >= 1.0:
+                    # Soft-pass disabled the gate entirely
+                    info["dispatch_masked"] = False
+                    info["dispatch_soft_passed"] = True
+                elif self._mode_soft_rng.random() < float(self.cfg.mode_soft_pass):
+                    # Let this out-of-mode action through this time
+                    info["dispatch_masked"] = False
+                    info["dispatch_soft_passed"] = True
+                else:
+                    info["dispatch_masked"] = True
+                    action = HOLD_ACTION
 
         if action == HOLD_ACTION:
             new_skill_name = None

@@ -32,15 +32,24 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--n-epochs", type=int, default=2)
     p.add_argument("--lr", type=float, default=3.0e-4)
+    p.add_argument("--ent-coef", type=float, default=0.05,
+                   help="PPO entropy coefficient. Default 0.05 keeps the "
+                        "policy stochastic; see memory cats-are-stochastic.")
     p.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--curiosity", action="store_true",
                    help="enable ICM curiosity wiring in the env")
-    p.add_argument("--curiosity-w", type=float, default=0.0,
+    p.add_argument("--curiosity-w", type=float, default=0.05,
                    help="weight on the curiosity term in the composite reward")
     p.add_argument("--comfort-w", type=float, default=1.0)
-    p.add_argument("--play-w", type=float, default=1.0)
+    p.add_argument("--play-w", type=float, default=0.3,
+                   help="play reward weight. Default 0.3 (was 1.0); v0 baseline "
+                        "showed play term needed to stop dominating 30x.")
     p.add_argument("--hold-w", type=float, default=1.0)
+    p.add_argument("--mode-soft-pass", type=float, default=0.3,
+                   help="probability of letting an out-of-attractor-mode action "
+                        "through instead of forcing HOLD. 0 = hard mask (v0); "
+                        "1 = ignore the mask entirely.")
     p.add_argument("--wandb-project", default=None)
     p.add_argument("--wandb-entity", default=None)
     p.add_argument("--wandb-run-name", default=None)
@@ -65,6 +74,7 @@ def main() -> None:
         batch_size=args.batch_size,
         n_epochs=args.n_epochs,
         learning_rate=args.lr,
+        ent_coef=args.ent_coef,
         device=args.device,
         seed=args.seed,
         log_dir=Path(args.log_dir) if args.log_dir else None,
@@ -73,10 +83,14 @@ def main() -> None:
         wandb_run_name=args.wandb_run_name,
         save_model_to=Path(args.save) if args.save else None,
     )
+    # mode_soft_pass flows into the env config; default 0.3 lets ~30% of
+    # out-of-mode actions through instead of forcing HOLD.
+    env_cfg.mode_soft_pass = args.mode_soft_pass
 
     print(f"[train_brain] starting run: steps={args.steps}, "
           f"curiosity={args.curiosity}, curiosity_w={args.curiosity_w}, "
-          f"device={args.device}")
+          f"ent_coef={args.ent_coef}, play_w={args.play_w}, "
+          f"mode_soft_pass={args.mode_soft_pass}, device={args.device}")
     model = train_brain(cfg)
     print("[train_brain] done. n_calls=", getattr(model, "num_timesteps", "?"))
 

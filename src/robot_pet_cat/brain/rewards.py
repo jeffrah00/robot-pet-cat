@@ -386,20 +386,28 @@ class PlayReward:
 @dataclass
 class HoldBonusReward:
     """Pause-as-default. Small positive reward when the cat is doing nothing
-    interesting AND no nearby stimulus is pulling for action.
+    interesting AND no nearby *moving* stimulus is pulling for action.
 
     Reward when ALL of:
       (a) active_skill is in hold_skills, or None (no skill yet)
       (b) cat.speed < speed_threshold
-      (c) no entity flagged play_target is within saliency_range_m
+      (c) no entity flagged play_target is within saliency_range_m AND
+          moving faster than min_target_speed_mps
 
-    Calibrate `bonus` against per-step task rewards. Target ~0.7-0.85 of
-    episode ticks rewarded for cat-like stillness.
+    The min_target_speed_mps gate is important: real cats don't watch
+    motionless objects. A still ball is not a salient stimulus, so it
+    shouldn't suppress the hold bonus. This was a v0 bug -- hold fired
+    zero times because the ball was always within 0.6 m of the parked cat.
+
+    Calibrate `bonus` against per-step task rewards. Target ~0.2-0.4 of
+    episode ticks rewarded for cat-like stillness (cats are still ~80%
+    of real time, but in this v0 scene most steps have something to do).
     """
 
     bonus: float = 0.01
     speed_threshold: float = 0.05
     saliency_range_m: float = 0.6
+    min_target_speed_mps: float = 0.05
     hold_skills: tuple = ("sit", "lie_down", "crouch", "look_at")
 
     def compute(self, scene_state: "SceneState", cat: CatState) -> float:
@@ -411,7 +419,15 @@ class HoldBonusReward:
             dx = float(cat.xy[0] - ent.pos_xyz[0])
             dy = float(cat.xy[1] - ent.pos_xyz[1])
             d = float(np.hypot(dx, dy))
-            if d <= self.saliency_range_m:
+            if d > self.saliency_range_m:
+                continue
+            # Still targets are not salient: a motionless ball doesn't
+            # suppress hold. Only moving play_targets count.
+            if ent.velocity_xyz is None:
+                # No velocity info -> conservative: treat as salient.
+                return 0.0
+            target_speed = float(np.linalg.norm(ent.velocity_xyz[:2]))
+            if target_speed >= self.min_target_speed_mps:
                 return 0.0
         return float(self.bonus)
 
@@ -460,11 +476,19 @@ class CompositeRewardConfig:
     v1 weights (curiosity, comfort, play) are MULTIPLIED by Mood.weights().
     hold_w is NOT mood-modulated -- pause-as-default applies regardless of
     mood (sleepy and alert cats both reward stillness when nothing's up).
+
+    Defaults are tuned per the v0 baseline findings:
+    - curiosity_w = 0.05: ICM is on by default; novelty actively pushes
+      against attractor collapse (memory: cats-are-stochastic).
+    - comfort_w  = 1.0
+    - play_w     = 0.3: dropped from 1.0; v0 showed play dominated 30x.
+    - hold_w     = 1.0: hold fires more reliably now that still play
+      targets don't trigger saliency (memory: brain-v0-baseline-findings).
     """
 
-    curiosity_w: float = 0.0
+    curiosity_w: float = 0.05
     comfort_w: float = 1.0
-    play_w: float = 1.0
+    play_w: float = 0.3
     hold_w: float = 1.0
 
 

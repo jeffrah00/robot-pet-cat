@@ -51,6 +51,11 @@ class BrainTrainConfig:
     batch_size: int = 64
     n_epochs: int = 2
     learning_rate: float = 3.0e-4
+    # Entropy coefficient. SB3's default is 0.0; that's *wrong for cats* --
+    # the policy collapses to a single optimal behavior. We want sustained
+    # behavioral variability. 0.05-0.1 is the cat-friendly range; do not
+    # decay this. See memory: cats-are-stochastic.
+    ent_coef: float = 0.05
     policy_kwargs: Optional[dict] = None  # e.g. dict(net_arch=[64,64])
     device: str = "cpu"
     seed: Optional[int] = None
@@ -195,6 +200,7 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
         batch_size=cfg.batch_size,
         n_epochs=cfg.n_epochs,
         learning_rate=cfg.learning_rate,
+        ent_coef=cfg.ent_coef,
         policy_kwargs=cfg.policy_kwargs,
         device=cfg.device,
         seed=cfg.seed,
