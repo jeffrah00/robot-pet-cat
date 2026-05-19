@@ -1,8 +1,11 @@
-"""Tests for brain.rewards (ComfortReward, PlayReward, HoldBonusReward, composite)."""
+"""Tests for brain.rewards (ComfortReward, PlayReward, HoldBonusReward, composite).
+
+Full ICM behavior is tested in test_brain_curiosity.py; this file only
+checks the API guard on CuriosityReward.compute() and that the composite
+reward function plumbs `curiosity_value` correctly.
+"""
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 import numpy as np
 import pytest
@@ -71,7 +74,7 @@ def _ball(x: float = 0.0, y: float = 0.0, vx: float = 0.0, vy: float = 0.0) -> S
 
 class TestComfortReward:
     def test_zero_when_alone_no_warm_no_couch(self) -> None:
-        scene = _scene()  # empty scene
+        scene = _scene()
         r = ComfortReward().compute(scene, _cat(x=0.0, y=0.0))
         assert r == 0.0
 
@@ -89,18 +92,15 @@ class TestComfortReward:
         r_near = cr.compute(scene, _cat(x=0.0, y=0.0))
         r_mid = cr.compute(scene, _cat(x=1.0, y=0.0))
         r_far = cr.compute(scene, _cat(x=5.0, y=0.0))
-        # All warmth-only; subterm is in [0,1]
-        assert r_near == pytest.approx(cr.warm_weight, abs=1e-6)  # at center => 1.0 * w
+        assert r_near == pytest.approx(cr.warm_weight, abs=1e-6)
         assert r_near > r_mid > r_far
         assert r_far == pytest.approx(0.0, abs=1e-3)
 
     def test_lying_down_kills_on_couch_credit(self) -> None:
-        """Cat lying flat (body_height ~0.08) doesn't count as 'on' the couch
-        in the kinematic scaffold — the height tolerance check guards it."""
         scene = _scene(_couch(2.0, 0.0))
         cr = ComfortReward()
         r = cr.compute(scene, _cat(x=2.0, y=0.0, body_height=0.08))
-        assert r == 0.0  # outside height tolerance
+        assert r == 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -124,7 +124,7 @@ class TestPlayReward:
         assert r == pytest.approx(2.0, abs=1e-5)
 
     def test_swat_active_adds_causal_bonus(self) -> None:
-        scene = _scene(_ball(x=0.1, y=0.0, vx=0.0, vy=0.0))  # stationary ball in range
+        scene = _scene(_ball(x=0.1, y=0.0, vx=0.0, vy=0.0))
         pr = PlayReward(paw_range_m=0.4, causal_bonus=0.5, causal_skills=("swat",))
         r_idle = pr.compute(scene, _cat(x=0.0, y=0.0, active_skill="sit"))
         r_swat = pr.compute(scene, _cat(x=0.0, y=0.0, active_skill="swat"))
@@ -163,7 +163,6 @@ class TestHoldBonusReward:
         assert r_walk == 0.0
 
     def test_allows_none_skill(self) -> None:
-        """Episode start with no skill yet should still get the hold bonus."""
         scene = _scene()
         r = HoldBonusReward().compute(scene, _cat(active_skill=None))
         assert r > 0
@@ -189,11 +188,26 @@ class TestCompositeReward:
         scene = _scene(_couch())
         cat = _cat(x=2.0, y=0.0)
         out = compute_composite_reward(scene, cat, _StubMood())
-        assert "total" in out
-        assert "comfort" in out
-        assert "play" in out
-        assert "hold" in out
+        for k in ("total", "comfort", "play", "hold", "curiosity"):
+            assert k in out
+        assert out["curiosity"] == 0.0  # default when no value supplied
         assert out["total"] != 0.0  # on couch => non-zero comfort
+
+    def test_curiosity_value_passed_through_and_weighted(self) -> None:
+        """The supplied curiosity_value flows into the breakdown and is
+        scaled by cfg.curiosity_w * mood_w_curiosity."""
+        scene = _scene()
+        cat = _cat(speed=0.2)  # disables hold bonus
+        mood = _StubMood(cur=0.5, com=0.0, play=0.0)
+        cfg = CompositeRewardConfig(
+            curiosity_w=2.0, comfort_w=0.0, play_w=0.0, hold_w=0.0
+        )
+        out = compute_composite_reward(
+            scene, cat, mood, cfg=cfg, curiosity_value=0.3
+        )
+        # total = curiosity_w * mood_w_curiosity * value = 2.0 * 0.5 * 0.3 = 0.3
+        assert out["curiosity"] == pytest.approx(0.3, abs=1e-9)
+        assert out["total"] == pytest.approx(0.3, abs=1e-9)
 
     def test_mood_weight_modulates_comfort_subterm(self) -> None:
         scene = _scene(_couch())
@@ -205,21 +219,31 @@ class TestCompositeReward:
     def test_hold_term_not_mood_modulated(self) -> None:
         """Pause-default applies regardless of mood (curious cat in a quiet
         room is still still)."""
-        scene = _scene()  # nothing salient
-        cat = _cat()  # still, no skill
-        out_high = compute_composite_reward(scene, cat, _StubMood(com=1.0, play=1.0, cur=1.0))
-        out_low = compute_composite_reward(scene, cat, _StubMood(com=0.0, play=0.0, cur=0.0))
-        # Both should have identical hold subterm since hold_w isn't mood-modulated
+        scene = _scene()
+        cat = _cat()
+        out_high = compute_composite_reward(
+            scene, cat, _StubMood(com=1.0, play=1.0, cur=1.0)
+        )
+        out_low = compute_composite_reward(
+            scene, cat, _StubMood(com=0.0, play=0.0, cur=0.0)
+        )
         assert out_high["hold"] == out_low["hold"]
         assert out_high["hold"] > 0
 
 
 # --------------------------------------------------------------------------- #
-# CuriosityReward stays a stub
+# CuriosityReward API guard (full ICM behavior is in test_brain_curiosity.py)
 # --------------------------------------------------------------------------- #
 
 
-class TestCuriosityStub:
-    def test_raises_until_implemented(self) -> None:
-        with pytest.raises(NotImplementedError):
-            CuriosityReward().compute(None, None, None)
+class TestCuriosityComputeGuard:
+    def test_compute_raises_typeerror(self) -> None:
+        """The (scene, cat, mood) entry point is intentionally a hard error.
+
+        ICM needs (feat_t, action, feat_tp1); using .compute(...) would mean
+        the env stopped passing curiosity_value and silently got a zero.
+        """
+        pytest.importorskip("torch")
+        c = CuriosityReward(obs_dim=4, n_actions=3, hidden=8, feature_dim=4, seed=0)
+        with pytest.raises(TypeError):
+            c.compute(None, None, None)
