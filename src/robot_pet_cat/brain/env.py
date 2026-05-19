@@ -179,6 +179,20 @@ class BrainEnvConfig:
     mode_soft_pass: float = 0.3
     # RNG seed for the mask-softening coin flip. None => use env state.
     mode_soft_rng_seed: Optional[int] = None
+    # Stochastic action-repeat / decision-period. After each decision,
+    # the env samples a new period uniformly in
+    # [decision_period_min_steps, decision_period_max_steps] and uses
+    # that as the gap until the next decision. In between it repeats
+    # the last-dispatched action. Defaults of min=max=1 preserve the
+    # original per-step behavior. Range ~[40, 300] with dt=0.05 means
+    # the cat commits to each skill for 2-15 sim-seconds (mean ~8.5s),
+    # with the *variability itself* coming from a uniform draw -- no
+    # metronome, no enforcement, just a stochastic decision cadence.
+    decision_period_min_steps: int = 1
+    decision_period_max_steps: int = 1
+    # Deprecated: enforcement-style skill commitment. Kept for
+    # backwards compat; prefer the decision_period_* knobs. 0 = off.
+    min_skill_duration_s: float = 0.0
     # ICM curiosity wiring. Off by default -- when enabled, the env owns a
     # CuriosityReward, projects obs->feature each step, feeds intrinsic
     # reward to the composer, and emits Transitions in info for a trainer
@@ -246,6 +260,12 @@ class BrainEnv:
         # Soft-mask RNG. Independent of policy stochasticity so the
         # softened mask is reproducible per env seed.
         self._mode_soft_rng = np.random.default_rng(self.cfg.mode_soft_rng_seed)
+        # Action-repeat state. _steps_until_decision counts down each
+        # step; when <=0 we consult the policy's input action and
+        # sample a new period in [min_steps, max_steps]. Initialized
+        # to 0 so step 0 is always a decision.
+        self._last_action: int = HOLD_ACTION
+        self._steps_until_decision: int = 0
         # Joint id lookup for free-joint bodies
         self._free_joint_qvel_offset: dict = {}
         for body_name in self.movable_bodies:
@@ -277,6 +297,8 @@ class BrainEnv:
         self.t_sim = 0.0
         self.episode_step = 0
         self.last_reward_breakdown = {}
+        self._last_action = HOLD_ACTION
+        self._steps_until_decision = 0
         obs = self._observe()
         # Seed the prev-feature buffer so the first step has a feat_t.
         if self.curiosity is not None:
@@ -290,6 +312,29 @@ class BrainEnv:
         info: dict = {}
         if not 0 <= action < self.action_space_n:
             raise ValueError(f"action {action} out of range [0, {self.action_space_n})")
+
+        # Stochastic action-repeat. Most steps, we ignore the policy's
+        # input and repeat the last-dispatched action. On decision steps
+        # (chosen at random intervals), we accept the new input and
+        # sample the next gap. With min=max=1 this is a no-op (every
+        # step is a decision step).
+        period_min = self.cfg.decision_period_min_steps
+        period_max = self.cfg.decision_period_max_steps
+        if period_min > 1 or period_max > 1:
+            if self._steps_until_decision <= 0:
+                # Decision step: use the input action, sample next gap.
+                self._last_action = int(action)
+                if period_min >= period_max:
+                    self._steps_until_decision = int(period_min)
+                else:
+                    self._steps_until_decision = int(
+                        self._mode_soft_rng.integers(period_min, period_max + 1)
+                    )
+                info["action_decision_step"] = True
+            else:
+                action = self._last_action
+                info["action_repeated"] = True
+            self._steps_until_decision -= 1
 
         # Optional mode-mask. If active mode forbids the chosen skill, fall
         # back to HOLD -- but only with probability (1 - mode_soft_pass), so
@@ -319,6 +364,22 @@ class BrainEnv:
         else:
             new_skill_name = SKILL_NAMES[action - 1]
             info["dispatched"] = new_skill_name
+
+        # Skill-commitment gate: a non-HOLD skill, once dispatched, persists
+        # for at least cfg.min_skill_duration_s before the policy can switch
+        # to a DIFFERENT non-HOLD skill. HOLD always interrupts.
+        # See memory cats-are-stochastic — high entropy at the per-step
+        # policy level looks twitchy without this commitment.
+        if (
+            self.cfg.min_skill_duration_s > 0.0
+            and self.active_skill_name is not None
+            and new_skill_name is not None  # HOLD is allowed to interrupt
+            and new_skill_name != self.active_skill_name
+            and self.time_in_skill < self.cfg.min_skill_duration_s
+        ):
+            info["dispatch_committed_to"] = self.active_skill_name
+            info["dispatch_overridden"] = new_skill_name
+            new_skill_name = self.active_skill_name  # force-continue
 
         # Skill switch
         if new_skill_name is not None and new_skill_name != self.active_skill_name:

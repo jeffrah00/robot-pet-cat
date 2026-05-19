@@ -202,6 +202,13 @@ def main() -> None:
         help="argmax-policy view (no sampling); default sampled",
     )
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--decision-period-min", type=int, default=1,
+                   help="Minimum env-steps per policy decision. Use 40-300 "
+                        "with default dt=0.05 to get 2-15s cat commitment.")
+    p.add_argument("--decision-period-max", type=int, default=1,
+                   help="Maximum env-steps per policy decision; "
+                        "each commitment duration sampled uniformly in "
+                        "[min, max].")
     args = p.parse_args()
 
     cfg = BrainEnvConfig(
@@ -210,18 +217,5 @@ def main() -> None:
         curiosity_feature_dim=8,
         curiosity_hidden=16,
         max_steps_per_episode=args.steps + 1,  # don't truncate mid-render
-    )
-    env = make_brain_gym_env(cfg)
-    print(f"[render_brain] loading {args.checkpoint}")
-    model = PPO.load(args.checkpoint, env=env)
-
-    print(f"[render_brain] rolling out {args.steps} steps (deterministic={args.deterministic})")
-    history = collect_trajectory(model, env, n_steps=args.steps, deterministic=args.deterministic)
-
-    print(f"[render_brain] encoding to {args.out}")
-    render_to_mp4(history, Path(args.out), fps=args.fps, trail_len=args.trail)
-    print(f"[render_brain] done -> {args.out}")
-
-
-if __name__ == "__main__":
-    main()
+        decision_period_min_steps=args.decision_period_min,
+        decision_period_max_steps=arg

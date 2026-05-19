@@ -70,6 +70,11 @@ def main() -> None:
                    help="Spawn x for the cat at episode reset. Default 0.")
     p.add_argument("--initial-cat-y", type=float, default=0.0,
                    help="Spawn y for the cat at episode reset. Default 0.")
+    p.add_argument("--skill-min-duration", type=float, default=0.0,
+                   help="Minimum seconds a non-HOLD skill stays active before "
+                        "the policy can switch to a different non-HOLD skill. "
+                        "HOLD always interrupts. Default 0 = per-step switching. "
+                        "~1.5 = cat-like commitment.")
     p.add_argument("--wandb-project", default=None)
     p.add_argument("--wandb-entity", default=None)
     p.add_argument("--wandb-run-name", default=None)
@@ -94,6 +99,7 @@ def main() -> None:
         curiosity_enabled=args.curiosity,
         mode_policy=mode_policy,
         initial_cat_xy=(args.initial_cat_x, args.initial_cat_y),
+        min_skill_duration_s=args.skill_min_duration,
     )
     composite_cfg = CompositeRewardConfig(
         curiosity_w=args.curiosity_w,
@@ -125,15 +131,4 @@ def main() -> None:
 
     print(f"[train_brain] starting run: steps={args.steps}, "
           f"curiosity={args.curiosity}, curiosity_w={args.curiosity_w}, "
-          f"ent_coef={args.ent_coef}, play_w={args.play_w}, "
-          f"attractor={'ON' if mode_policy else 'OFF'}, "
-          f"min_dwell={args.mode_min_dwell}, "
-          f"mode_soft_pass={args.mode_soft_pass}, "
-          f"initial_xy=({args.initial_cat_x},{args.initial_cat_y}), "
-          f"device={args.device}")
-    model = train_brain(cfg)
-    print("[train_brain] done. n_calls=", getattr(model, "num_timesteps", "?"))
-
-
-if __name__ == "__main__":
-    main()
+          f"ent_coef={args.ent_coef}, play_w={args.pl
