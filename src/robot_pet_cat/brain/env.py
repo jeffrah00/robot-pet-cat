@@ -230,6 +230,13 @@ class BrainEnvConfig:
     # Spawn height for the Go2 base body at reset. 0.32 matches the
     # init_state z in unitree_rl_mjlab's training config.
     physics_spawn_z: float = 0.32
+    # Cat-eye camera observation. When True (and use_physics_cat=True), BrainEnv
+    # renders a tiny cat_eye frame each step and adds "cat_eye_img" (H x W float32
+    # [0,1] grayscale) to the obs dict. This is the raw pixel signal that feeds
+    # the v1 curiosity feature vector and the visual obs space.
+    use_cat_eye_obs: bool = False
+    cat_eye_render_width: int = 16
+    cat_eye_render_height: int = 16
 
 
 # --------------------------------------------------------------------------- #
@@ -274,6 +281,19 @@ class BrainEnv:
             self.mj_model = mujoco.MjModel.from_xml_path(str(self.cfg.scene_xml))
             self.mj_data = mujoco.MjData(self.mj_model)
             self.cat = KinematicCat()
+
+        # Optional cat-eye observer (physics mode only).
+        self._cat_eye_renderer = None
+        self._cat_eye_cam_id: int = -1
+        if self.cfg.use_cat_eye_obs and self.cfg.use_physics_cat:
+            self._cat_eye_renderer = mujoco.Renderer(
+                self.mj_model,
+                width=self.cfg.cat_eye_render_width,
+                height=self.cfg.cat_eye_render_height,
+            )
+            self._cat_eye_cam_id = mujoco.mj_name2id(
+                self.mj_model, mujoco.mjtObj.mjOBJ_CAMERA, "cat_eye"
+            )
 
         self.mood = Mood(MoodConfig())
         self.registry = SkillRegistry()
@@ -555,6 +575,13 @@ class BrainEnv:
             obs["action_mask"] = self.mode_policy.allowed_action_mask(
                 self.action_space_n, SKILL_NAMES
             )
+        # Cat-eye pixel observation (optional, physics mode only).
+        if self._cat_eye_renderer is not None and self._cat_eye_cam_id >= 0:
+            self._cat_eye_renderer.update_scene(
+                self.mj_data, camera=self._cat_eye_cam_id
+            )
+            img_rgb = self._cat_eye_renderer.render()  # H x W x 3  uint8
+            obs["cat_eye_img"] = (img_rgb.mean(axis=2) / 255.0).astype(np.float32)
         return obs
 
     def _extract_scene_state(self) -> SceneState:

@@ -67,3 +67,31 @@ def obs_dict_to_curiosity_vec(obs: dict) -> np.ndarray:
     )
     assert vec.shape == (CURIOSITY_OBS_DIM_V0,), vec.shape
     return vec
+
+
+# ---------------------------------------------------------------------------
+# v1: v0 base + cat_eye grayscale pixels
+# ---------------------------------------------------------------------------
+
+CAT_EYE_PIXELS: int = 256  # 16 x 16
+
+CURIOSITY_OBS_DIM_V1: int = CURIOSITY_OBS_DIM_V0 + CAT_EYE_PIXELS  # 271
+
+
+def obs_dict_to_curiosity_vec_v1(obs: dict) -> np.ndarray:
+    """Project obs dict to the v1 curiosity feature vector (271 dim).
+
+    v1 = v0 base (15) + cat_eye grayscale pixels flattened (256).
+    When "cat_eye_img" is absent from obs (kinematic mode, or
+    use_cat_eye_obs=False), the pixel block is all zeros.
+    The pixel values are in [0, 1] (already normalised by BrainEnv).
+    """
+    base = obs_dict_to_curiosity_vec(obs)
+    eye_img = obs.get("cat_eye_img")
+    if eye_img is not None:
+        eye_flat = np.asarray(eye_img, dtype=np.float32).reshape(CAT_EYE_PIXELS)
+    else:
+        eye_flat = np.zeros(CAT_EYE_PIXELS, dtype=np.float32)
+    vec = np.concatenate([base, eye_flat])
+    assert vec.shape == (CURIOSITY_OBS_DIM_V1,), vec.shape
+    return vec
