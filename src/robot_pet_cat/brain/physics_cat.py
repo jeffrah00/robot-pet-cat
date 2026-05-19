@@ -59,6 +59,52 @@ DEFAULT_BASE_SPAWN_Z = 0.32
 GO2_BASE_BODY = "base"
 
 
+def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
+    """Patch the menagerie go2_mjx.xml in `assets` to mount a cat_eye camera
+    onto the Go2 base body. Returns the same dict (mutated).
+
+    MuJoCo's standalone XML does not let an outer file `re-open` an included
+    body by name -- duplicate <body name="base"> raises XML Error. To attach
+    a body-mounted POV camera, we inject the <camera> as the first child of
+    the existing <body name="base"...> tag inside go2_mjx.xml's content as
+    held in the assets dict, then compile from_xml_string with the patched
+    asset.
+
+    Idempotent: if the patched asset already has a cat_eye camera, no-op.
+    """
+    import re
+
+    KEY = "go2_mjx.xml"
+    if KEY not in assets:
+        return assets
+    text = assets[KEY].decode("utf-8")
+    if "cat_eye" in text:
+        return assets  # already patched
+
+    # Pose: forward of trunk (+x by 0.30), slightly above (+z by 0.05).
+    # xyaxes maps the camera's local X (right) and Y (up) so the camera's
+    # -Z (look direction) is along the body's +x.
+    cam_block = (
+        '\n    <camera name="cat_eye" pos="0.30 0 0.05" '
+        'xyaxes="0 -1 0 0 0 1" fovy="70"/>\n'
+        '    <site name="nose" pos="0.30 0 0.0" size="0.01" '
+        'type="sphere" group="2" rgba="1 0.5 0.5 0.6"/>'
+    )
+    new_text, n = re.subn(
+        r'(<body name="base"[^>]*>)',
+        r'\1' + cam_block,
+        text,
+        count=1,
+    )
+    if n == 0:
+        raise RuntimeError(
+            "Could not find <body name=\"base\" ...> in go2_mjx.xml to "
+            "inject cat_eye camera."
+        )
+    assets[KEY] = new_text.encode("utf-8")
+    return assets
+
+
 @dataclass
 class PhysicsCatConfig:
     """Knobs that don't depend on the model handle."""

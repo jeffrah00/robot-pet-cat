@@ -107,7 +107,24 @@ LIVING_ROOM_V0_FLAGS: dict[tuple[str, str], SemanticFlags] = {
     ("body", "ball"): SemanticFlags(play_target=True),
     # Window region is a tagged floor patch — warm comfort spot.
     ("site", "window_region"): SemanticFlags(warm=True),
+    # v1 living-room additions (data/go2_scenes/living_room_with_go2.xml):
+    # Coffee table: elevated platform (could perch on, briefly).
+    ("body", "coffee_table"): SemanticFlags(elevated=True),
+    # Area rug: soft warm spot to sit on.
+    ("body", "rug"): SemanticFlags(soft=True, warm=True),
+    # Bookshelf: high vertical structure; top is a jump target.
+    ("body", "bookshelf"): SemanticFlags(elevated=True),
+    # Cat tree: the canonical elevated soft target.
+    ("body", "cat_tree"): SemanticFlags(elevated=True, soft=True),
+    # Scratching post: play target (can swat at it).
+    ("body", "scratching_post"): SemanticFlags(play_target=True),
+    # Food + water bowls: warm comfort (food == reward).
+    ("body", "food_bowl"): SemanticFlags(warm=True),
+    ("body", "water_bowl"): SemanticFlags(warm=True),
 }
+
+# Alias for clarity once Tier 3 starts referencing v1.
+LIVING_ROOM_V1_FLAGS = LIVING_ROOM_V0_FLAGS
 
 
 # Entities that are physically free-floating (have a free joint), so the brain

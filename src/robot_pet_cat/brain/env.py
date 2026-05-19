@@ -254,11 +254,15 @@ class BrainEnv:
                     "(path to .onnx, .pt, or run directory)."
                 )
             # Compile merged scene with menagerie's Go2 assets in-memory.
-            from robot_pet_cat.brain.physics_cat import PhysicsCat, PhysicsCatConfig
+            from robot_pet_cat.brain.physics_cat import (
+                PhysicsCat,
+                PhysicsCatConfig,
+                inject_cat_eye_camera,
+            )
             from robot_pet_cat.motion.go2_base import get_assets
 
             xml_str = Path(self.cfg.physics_scene_xml).read_text()
-            assets = get_assets()
+            assets = inject_cat_eye_camera(get_assets())
             self.mj_model = mujoco.MjModel.from_xml_string(xml_str, assets=assets)
             self.mj_data = mujoco.MjData(self.mj_model)
             self.cat = PhysicsCat(
