@@ -74,6 +74,9 @@ pip install --upgrade pip wheel "setuptools<70"
 echo ">>> project (motion + brain + retargeting + dev) -- pose lives in .venv-pose"
 pip install -e ".[motion,brain,retargeting,dev]"
 
+echo ">>> onnxruntime (needed for PhysicsCat / ONNX walker policy loading)"
+pip install onnxruntime
+
 # --- 5. External service logins ---------------------------------------------
 echo ">>> HF + W&B login (if .env has the keys)"
 if [[ -f .env ]]; then
