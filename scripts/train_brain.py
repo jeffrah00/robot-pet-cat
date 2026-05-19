@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from robot_pet_cat.brain.attractor import ModePolicy, ModePolicyConfig
 from robot_pet_cat.brain.env import BrainEnvConfig
 from robot_pet_cat.brain.rewards import CompositeRewardConfig
 from robot_pet_cat.brain.runner import BrainTrainConfig, train_brain
@@ -50,6 +51,12 @@ def main() -> None:
                    help="probability of letting an out-of-attractor-mode action "
                         "through instead of forcing HOLD. 0 = hard mask (v0); "
                         "1 = ignore the mask entirely.")
+    p.add_argument("--no-attractor", action="store_true",
+                   help="disable the ModePolicy attractor layer entirely. "
+                        "Default: attractors ON (the cat changes its mind "
+                        "every ~5-20s as the active mode switches).")
+    p.add_argument("--attractor-seed", type=int, default=0,
+                   help="rng seed for the ModePolicy transition sampler")
     p.add_argument("--wandb-project", default=None)
     p.add_argument("--wandb-entity", default=None)
     p.add_argument("--wandb-run-name", default=None)
@@ -58,7 +65,17 @@ def main() -> None:
     p.add_argument("--save", default=None, help="path to save the trained PPO zip")
     args = p.parse_args()
 
-    env_cfg = BrainEnvConfig(curiosity_enabled=args.curiosity)
+    # Build the env config. Attractors on by default so the cat changes
+    # its mind every ~5-20s; pass --no-attractor to opt out.
+    mode_policy = None
+    if not args.no_attractor:
+        mode_policy = ModePolicy(
+            cfg=ModePolicyConfig(rng_seed=args.attractor_seed)
+        )
+    env_cfg = BrainEnvConfig(
+        curiosity_enabled=args.curiosity,
+        mode_policy=mode_policy,
+    )
     composite_cfg = CompositeRewardConfig(
         curiosity_w=args.curiosity_w,
         comfort_w=args.comfort_w,
@@ -90,6 +107,7 @@ def main() -> None:
     print(f"[train_brain] starting run: steps={args.steps}, "
           f"curiosity={args.curiosity}, curiosity_w={args.curiosity_w}, "
           f"ent_coef={args.ent_coef}, play_w={args.play_w}, "
+          f"attractor={'ON' if mode_policy else 'OFF'}, "
           f"mode_soft_pass={args.mode_soft_pass}, device={args.device}")
     model = train_brain(cfg)
     print("[train_brain] done. n_calls=", getattr(model, "num_timesteps", "?"))
