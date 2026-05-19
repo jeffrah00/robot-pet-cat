@@ -54,24 +54,26 @@ from typing import Optional, Protocol
 import numpy as np
 
 
-# Default joint positions, MJCF order. Matches Unitree training config.
-# Source: unitree_rl_mjlab/src/assets/robots/unitree_go2/go2_constants.py
+# Default joint positions, MJCF order = FL, FR, RL, RR (verified by
+# mj_id2name against the compiled scene). This matches the order
+# menagerie's go2_mjx.xml emits actuators/joints in, which is also
+# the order mjlab trains the policy against.
 GO2_DEFAULT_JOINT_POS = np.array(
     [
-        +0.10, 0.90, -1.80,   # FR
         -0.10, 0.90, -1.80,   # FL
-        +0.10, 0.90, -1.80,   # RR
+        +0.10, 0.90, -1.80,   # FR
         -0.10, 0.90, -1.80,   # RL
+        +0.10, 0.90, -1.80,   # RR
     ],
     dtype=np.float32,
 )
 
-# Joint name order, FR/FL/RR/RL.
+# Joint name order, FL/FR/RL/RR (matches MJCF compile order).
 GO2_JOINT_NAMES = [
-    "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
     "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
-    "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+    "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
     "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+    "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
 ]
 
 # Per the env config: action delta is scaled by 0.25 before adding to default.
@@ -314,4 +316,3 @@ def _iter_from_name(name: str) -> int:
         return int(tail)
     except ValueError:
         return 0
-    

@@ -279,20 +279,13 @@ class PhysicsCat:
         # 1. base_ang_vel (3) -- gyro reading.
         base_ang_vel = mj_data.sensordata[self._gyro_adr : self._gyro_adr + 3]
 
-        # 2. projected_gravity (3). The 'upvector' sensor returns the IMU
-        # site's z-axis in world frame; rotating world-frame gravity into
-        # the body frame is equivalent to the negative of that vector
-        # (since gravity = -world_z). RSL-RL's standard form is
-        # projected_gravity = R_world_body^T * [0, 0, -1], which equals
-        # -(upvector_world expressed in body frame). The framezaxis
-        # sensor already gives us the IMU z-axis in WORLD coords; what
-        # we want is the WORLD gravity expressed in BODY coords. Use the
-        # base body rotation matrix from mj_data.xmat.
+        # 2. projected_gravity (3): world gravity (0,0,-1) expressed in
+        # body frame. xmat is R_world<-body (column i = i-th body axis in
+        # world coords). To rotate a world-frame vector into body coords,
+        # premultiply by R^T, so projected_gravity = R^T @ [0,0,-1] =
+        # -R[2,:] (third ROW of xmat, NOT third column).
         xmat = np.asarray(mj_data.xmat[self._base_body_id]).reshape(3, 3)
-        # World gravity is (0,0,-1) unit. R^T @ (0,0,-1) = -R[:,2] columns,
-        # i.e. -third column. In MuJoCo xmat is row-major so column 2 is
-        # xmat[:,2].
-        projected_gravity = -xmat[:, 2]
+        projected_gravity = -xmat[2, :]
 
         # 3. command (3): the velocity twist [vx, vy, yaw_rate].
         command = cmd_arr
