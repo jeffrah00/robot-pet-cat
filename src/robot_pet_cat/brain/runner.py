@@ -110,6 +110,15 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
                 for k, v in losses.items():
                     self.logger.record(f"curiosity/{k}", v)
                 self.logger.record("curiosity/batch_size", len(self._batch))
+            # SB3's internal logger doesn't auto-sync to wandb; log explicitly.
+            try:
+                import wandb
+                if wandb.run is not None:
+                    payload = {f"curiosity/{k}": v for k, v in losses.items()}
+                    payload["curiosity/batch_size"] = len(self._batch)
+                    wandb.log(payload, step=self.num_timesteps)
+            except Exception:
+                pass
             self._batch = []
 
     class RewardBreakdownCallback(BaseCallback):
@@ -137,10 +146,19 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
         def _on_rollout_end(self) -> None:
             if self._n == 0:
                 return
+            means = {k: v / self._n for k, v in self._sums.items()}
             if self.logger is not None:
-                for k, v in self._sums.items():
-                    self.logger.record(f"reward/{k}_mean", v / self._n)
+                for k, v in means.items():
+                    self.logger.record(f"reward/{k}_mean", v)
                 self.logger.record("reward/rollout_steps", self._n)
+            try:
+                import wandb
+                if wandb.run is not None:
+                    payload = {f"reward/{k}_mean": v for k, v in means.items()}
+                    payload["reward/rollout_steps"] = self._n
+                    wandb.log(payload, step=self.num_timesteps)
+            except Exception:
+                pass
             self._sums = {}
             self._n = 0
 
@@ -180,7 +198,7 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
         policy_kwargs=cfg.policy_kwargs,
         device=cfg.device,
         seed=cfg.seed,
-        verbose=0,
+        verbose=1,
         tensorboard_log=str(cfg.log_dir) if cfg.log_dir else None,
     )
 
