@@ -4,15 +4,23 @@
 Usage:
   python scripts/train_brain.py                       # smoke run (CPU, 200 steps)
   python scripts/train_brain.py --steps 200000        # longer run
-  python scripts/train_brain.py --steps 1000000 \\
-      --curiosity --curiosity-w 0.05 \\
-      --wandb-project robot-pet-cat \\
-      --wandb-entity jeffrah89-personal \\
-      --wandb-run-name brain_v0_curio \\
-      --save checkpoints/brain/brain_v0.zip
+  python scripts/train_brain.py --steps 500000 \
+      --curiosity --curiosity-w 0.05 \
+      --decision-period-min-steps 40 \
+      --decision-period-max-steps 300 \
+      --wandb-project robot-pet-cat \
+      --wandb-entity jeffrah89-personal \
+      --wandb-run-name brain_v3_stochastic \
+      --save checkpoints/brain/brain_v3_stochastic.zip
 
 Defaults are tuned to be smoke-runnable in a few seconds on CPU. Real
-training runs should set --steps, --device cuda, and a wandb run name.
+training runs should set --steps, --device cpu (MlpPolicy is faster on
+CPU than GPU for this obs size), and a wandb run name.
+
+Key v3 addition: --decision-period-min-steps / --max-steps wire the
+stochastic action-repeat into training (not just rendering). The policy
+needs to experience the slow decision cadence during training to learn
+the right macro-action distribution -- see memory stochastic-decision-period.
 """
 
 from __future__ import annotations
@@ -66,6 +74,27 @@ def main() -> None:
     p.add_argument("--mode-temperature", type=float, default=0.8,
                    help="ModePolicy softmax temperature on mood-bias scores. "
                         "Lower = more decisive mode picks.")
+    p.add_argument("--decision-period-min-steps", type=int, default=1,
+                   help="Min env-steps per skill decision (stochastic action-repeat). "
+                        "1 = per-step policy query every tick (v0-v2 default). "
+                        "40 = 2 s cat-like dwell at dt=0.05. "
+                        "IMPORTANT: train and render with the same value -- "
+                        "a policy trained at 20Hz doesn't learn the slower macro-action "
+                        "rhythm (see memory stochastic-decision-period).")
+    p.add_argument("--decision-period-max-steps", type=int, default=1,
+                   help="Max env-steps per skill decision. 300 = 15 s max dwell. "
+                        "v3 canonical: min=40, max=300 gives uniform [2-15 s] dwell.")
+    p.add_argument("--use-physics-cat", action="store_true",
+                   help="Use PhysicsCat (real Go2 MuJoCo) instead of KinematicCat stub. "
+                        "~1000x slower per step; recommended for eval/render rather than "
+                        "routine training. Requires --walker-policy-path.")
+    p.add_argument("--walker-policy-path", default=None,
+                   help="Path to trained Go2 velocity-walker policy (.onnx preferred, "
+                        "or .pt RSL-RL checkpoint, or directory). "
+                        "Required when --use-physics-cat.")
+    p.add_argument("--use-cat-eye-obs", action="store_true",
+                   help="Include 16x16 grayscale cat-eye camera frame in obs "
+                        "(obs_version=1, 271-dim). Requires --use-physics-cat.")
     p.add_argument("--initial-cat-x", type=float, default=0.0,
                    help="Spawn x for the cat at episode reset. Default 0.")
     p.add_argument("--initial-cat-y", type=float, default=0.0,
@@ -74,7 +103,7 @@ def main() -> None:
                    help="Minimum seconds a non-HOLD skill stays active before "
                         "the policy can switch to a different non-HOLD skill. "
                         "HOLD always interrupts. Default 0 = per-step switching. "
-                        "~1.5 = cat-like commitment.")
+                        "Deprecated: prefer --decision-period-* instead.")
     p.add_argument("--wandb-project", default=None)
     p.add_argument("--wandb-entity", default=None)
     p.add_argument("--wandb-run-name", default=None)
@@ -100,6 +129,11 @@ def main() -> None:
         mode_policy=mode_policy,
         initial_cat_xy=(args.initial_cat_x, args.initial_cat_y),
         min_skill_duration_s=args.skill_min_duration,
+        decision_period_min_steps=args.decision_period_min_steps,
+        decision_period_max_steps=args.decision_period_max_steps,
+        use_physics_cat=args.use_physics_cat,
+        walker_policy_path=Path(args.walker_policy_path) if args.walker_policy_path else None,
+        use_cat_eye_obs=args.use_cat_eye_obs,
     )
     composite_cfg = CompositeRewardConfig(
         curiosity_w=args.curiosity_w,
@@ -131,4 +165,18 @@ def main() -> None:
 
     print(f"[train_brain] starting run: steps={args.steps}, "
           f"curiosity={args.curiosity}, curiosity_w={args.curiosity_w}, "
-          f"ent_coef={args.ent_coef}, play_w={args.pl
+          f"ent_coef={args.ent_coef}, play_w={args.play_w}, "
+          f"attractor={'ON' if mode_policy else 'OFF'}, "
+          f"min_dwell={args.mode_min_dwell}, "
+          f"mode_soft_pass={args.mode_soft_pass}, "
+          f"decision_period=[{args.decision_period_min_steps},{args.decision_period_max_steps}], "
+          f"physics={'ON' if args.use_physics_cat else 'OFF'}, "
+          f"cat_eye={'ON' if args.use_cat_eye_obs else 'OFF'}, "
+          f"initial_xy=({args.initial_cat_x},{args.initial_cat_y}), "
+          f"device={args.device}")
+    model = train_brain(cfg)
+    print("[train_brain] done. n_calls=", getattr(model, "num_timesteps", "?"))
+
+
+if __name__ == "__main__":
+    main()
