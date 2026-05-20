@@ -209,9 +209,20 @@ class _TorchWalkerPolicy:
 
         # Pull out actor and obs_normalizer weights. Strip rsl_rl prefixes.
         actor_weights: dict = {}
-        # unitree_rl_mjlab format: actor weights stored directly under actor_state_dict
+        # unitree_rl_mjlab format: actor stored under actor_state_dict with mlp.* keys
         if "actor_state_dict" in blob:
-            actor_weights = dict(blob["actor_state_dict"])
+            asd = blob["actor_state_dict"]
+            for k, v in asd.items():
+                if k.startswith("mlp."):
+                    actor_weights[k[len("mlp."):]] = v
+                elif k.startswith("obs_normalizer."):
+                    tail = k.split(".", 1)[1]  # e.g. "_mean", "_var", "_std"
+                    if tail in ("_mean", "running_mean", "mean"):
+                        self.normalizer_mean = v.to(self.device)
+                        self._has_normalizer = True
+                    elif tail in ("_var", "running_var", "var", "_var"):
+                        self.normalizer_var = v.to(self.device)
+                        self._has_normalizer = True
         else:
             for k, v in sd.items():
                 # rsl_rl 2.x: keys look like "actor.0.weight", "actor.2.weight", ...
