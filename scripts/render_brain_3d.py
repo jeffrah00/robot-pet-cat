@@ -184,6 +184,18 @@ def main() -> int:
 
     # Lazy imports so --help doesn't pull mujoco.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+    # Import torch BEFORE onnxruntime (via BrainEnv/PhysicsCat).
+    # On pods with old NVIDIA drivers, torch._C._cuda_getDeviceCount()
+    # segfaults if onnxruntime has already grabbed the GPU context.
+    # Pre-importing torch here forces the CUDA check first; the
+    # UserWarning is harmless, but the ordering prevents the crash.
+    try:
+        import torch as _torch  # noqa: F401
+        _torch.zeros(1)         # trigger CUDA init before onnxruntime
+    except Exception:
+        pass
+
     import mujoco
     from PIL import Image  # noqa
     try:
@@ -330,17 +342,7 @@ def main() -> int:
 
         writer.append_data(canvas)
 
-        if step % 50 == 0:
-            _log(f"  step {step:4d}: mode={mode}, skill={skill}, "
-                 f"xy=({env.cat.xy[0]:+.2f},{env.cat.xy[1]:+.2f}), z={env.cat.body_height:.2f}")
-
-        if terminated or truncated:
-            obs = env.reset()
-
-    elapsed = time.perf_counter() - t_loop
-    writer.close()
-    _log(f"done in {elapsed:.1f}s ({args.steps / max(elapsed, 1e-6):.1f} fps wallclock)")
-    _log(f"wrote {out_path}")
+     
     return 0
 
 
