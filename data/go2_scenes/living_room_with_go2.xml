@@ -1,43 +1,18 @@
 <!--
-  Living room v1 + Go2.
+  Living room v1 + Go2.  (v5: unitree_mujoco go2.xml -- motor actuators
+  with software PD, matching the training environment.)
 
-  v0 was just floor + couch box + ball. v1 adds a more recognizable
-  household scene: cushioned couch (seat + back + two armrests), coffee
-  table, area rug, bookshelf, cat tree (three platforms for jump_to),
-  scratching post, food and water bowls, the ball, and the warm window
-  region. Walls give the cat a bounded space.
+  Physics: timestep=0.005, integrator=implicitfast, cone=elliptic,
+           impratio=100.
 
-  The Go2 itself comes in via <include file="go2_mjx.xml"/>. We re-open
-  the included `base` body inside our <worldbody> to mount a `cat_eye`
-  camera on the trunk (forward-facing, slightly above the IMU). That
-  camera is what render_brain_3d.py shows as the cat's POV inset.
-
-  Physics:
-    timestep=0.005, integrator=implicitfast (matches Unitree training).
-
-  Semantic flags (consumed by SceneState) live in scene_state.py  - 
-  NOT in this XML  -  so flag iteration doesn't require XML edits.
-
-  Layout (top-down, x to the right, y up, origin at room center):
-
-                          +y (3 m wall)
-                           |
-             -  bookshelf  - |==== cat tree ====
-                           |          |
-            food bowl      |       scratching
-            water bowl     |         post
-            -x ============o================ +x (3 m wall)
-                           |
-                  rug      |       coffee table
-                           |             v
-                           |          couch
-                                       (seat+back+arms)
-                          -y
+  Sensors: gyro added (go2.xml has none); foot linvel/pos changed from
+           site to body (unitree_mujoco has foot bodies, not sites).
 -->
 <mujoco model="living_room_with_go2_v1">
-  <include file="go2_mjx.xml"/>
+  <include file="go2.xml"/>
 
-  <option timestep="0.005" gravity="0 0 -9.81" integrator="implicitfast" impratio="100"/>
+  <option timestep="0.005" gravity="0 0 -9.81" integrator="implicitfast"
+          cone="elliptic" impratio="100"/>
 
   <statistic center="0 0 0.3" extent="3.0" meansize=".05"/>
 
@@ -57,8 +32,6 @@
              width="300" height="300"/>
     <material name="floor_mat" texture="floor_tex" texuniform="true"
               texrepeat="5 5" reflectance="0.05"/>
-
-    <!-- Furniture -->
     <material name="couch_fabric"  rgba="0.45 0.30 0.25 1"/>
     <material name="couch_cushion" rgba="0.55 0.38 0.30 1"/>
     <material name="wood_dark"     rgba="0.32 0.22 0.15 1"/>
@@ -66,100 +39,52 @@
     <material name="rug_mat"       rgba="0.78 0.30 0.30 1"/>
     <material name="rug_border"    rgba="0.55 0.18 0.18 1"/>
     <material name="wall_mat"      rgba="0.92 0.90 0.86 1"/>
-
-    <!-- Cat stuff -->
     <material name="catpost_mat"   rgba="0.55 0.45 0.35 1"/>
     <material name="cattree_rope"  rgba="0.78 0.65 0.45 1"/>
     <material name="cattree_top"   rgba="0.65 0.42 0.28 1"/>
     <material name="bowl_mat"      rgba="0.30 0.45 0.65 1"/>
     <material name="water_mat"     rgba="0.30 0.55 0.85 0.7"/>
-
-    <!-- Toys / play -->
     <material name="ball_mat"      rgba="0.85 0.22 0.22 1"/>
-
-    <!-- Windows / warmth -->
     <material name="window_mat"    rgba="1.00 0.95 0.55 0.35"/>
   </asset>
 
   <worldbody>
-    <!-- Lighting -->
     <light name="ceiling" pos="0 0 3" dir="0 0 -1" diffuse="0.65 0.65 0.65"/>
     <light name="window_glow" pos="-2.0 0 1.5" dir="0.4 0 -0.4"
            diffuse="0.45 0.4 0.25" specular="0.05 0.05 0.05"/>
 
-    <!-- Floor: 6x6 m room, friction tuned to match training. -->
-    <geom name="floor"
-          type="plane"
-          size="3 3 0.05"
-          material="floor_mat"
-          condim="3"
-          friction="0.6"
-          contype="1" conaffinity="1"/>
+    <geom name="floor" type="plane" size="3 3 0.05" material="floor_mat"
+          condim="3" friction="0.6" contype="1" conaffinity="1"/>
 
-    <!-- Walls: thin tall boxes at +/-x = +/-3, +/-y = +/-3 (visual only,
-         collision so the cat can't escape the room). -->
     <body name="wall_north" pos="0 3 1.2">
-      <geom type="box" size="3 0.05 1.2" material="wall_mat"
-            contype="1" conaffinity="1"/>
+      <geom type="box" size="3 0.05 1.2" material="wall_mat" contype="1" conaffinity="1"/>
     </body>
     <body name="wall_south" pos="0 -3 1.2">
-      <geom type="box" size="3 0.05 1.2" material="wall_mat"
-            contype="1" conaffinity="1"/>
+      <geom type="box" size="3 0.05 1.2" material="wall_mat" contype="1" conaffinity="1"/>
     </body>
     <body name="wall_east" pos="3 0 1.2">
-      <geom type="box" size="0.05 3 1.2" material="wall_mat"
-            contype="1" conaffinity="1"/>
+      <geom type="box" size="0.05 3 1.2" material="wall_mat" contype="1" conaffinity="1"/>
     </body>
     <body name="wall_west" pos="-3 0 1.2">
-      <geom type="box" size="0.05 3 1.2" material="wall_mat"
-            contype="1" conaffinity="1"/>
+      <geom type="box" size="0.05 3 1.2" material="wall_mat" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- COUCH  -  at the back wall +y. Modelled as 4 boxes: seat, back, 2 arms.
-         Whole couch tagged `couch` for semantic flags; armrests/back/seat
-         share that single semantic identity. -->
     <body name="couch" pos="0.0 2.3 0.0">
-      <!-- Seat: 1.4 m long, 0.6 m deep, 0.25 m off the floor. -->
-      <geom name="couch_seat" type="box"
-            pos="0 0 0.22"
-            size="0.70 0.30 0.05"
-            material="couch_cushion"
-            friction="0.9 0.005 0.0001"
-            contype="1" conaffinity="1"/>
-      <!-- Base: solid block under seat for visual mass -->
-      <geom name="couch_base" type="box"
-            pos="0 0 0.10"
-            size="0.70 0.30 0.10"
-            material="couch_fabric"
-            contype="1" conaffinity="1"/>
-      <!-- Backrest -->
-      <geom name="couch_back" type="box"
-            pos="0 0.27 0.45"
-            size="0.70 0.05 0.30"
-            material="couch_fabric"
-            contype="1" conaffinity="1"/>
-      <!-- Left armrest -->
-      <geom name="couch_arm_l" type="box"
-            pos="-0.72 0 0.32"
-            size="0.06 0.30 0.20"
-            material="couch_fabric"
-            contype="1" conaffinity="1"/>
-      <!-- Right armrest -->
-      <geom name="couch_arm_r" type="box"
-            pos="+0.72 0 0.32"
-            size="0.06 0.30 0.20"
-            material="couch_fabric"
-            contype="1" conaffinity="1"/>
+      <geom name="couch_seat" type="box" pos="0 0 0.22" size="0.70 0.30 0.05"
+            material="couch_cushion" friction="0.9 0.005 0.0001" contype="1" conaffinity="1"/>
+      <geom name="couch_base" type="box" pos="0 0 0.10" size="0.70 0.30 0.10"
+            material="couch_fabric" contype="1" conaffinity="1"/>
+      <geom name="couch_back" type="box" pos="0 0.27 0.45" size="0.70 0.05 0.30"
+            material="couch_fabric" contype="1" conaffinity="1"/>
+      <geom name="couch_arm_l" type="box" pos="-0.72 0 0.32" size="0.06 0.30 0.20"
+            material="couch_fabric" contype="1" conaffinity="1"/>
+      <geom name="couch_arm_r" type="box" pos="+0.72 0 0.32" size="0.06 0.30 0.20"
+            material="couch_fabric" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- COFFEE TABLE  -  in front of the couch, glass-top wooden frame -->
     <body name="coffee_table" pos="0.0 1.3 0.0">
-      <geom name="coffee_top" type="box"
-            pos="0 0 0.40" size="0.45 0.25 0.025"
+      <geom name="coffee_top" type="box" pos="0 0 0.40" size="0.45 0.25 0.025"
             material="wood_dark" contype="1" conaffinity="1"/>
-      <!-- 4 legs -->
       <geom name="leg_fl" type="box" pos="-0.40 -0.20 0.20" size="0.025 0.025 0.20"
             material="wood_dark" contype="1" conaffinity="1"/>
       <geom name="leg_fr" type="box" pos="+0.40 -0.20 0.20" size="0.025 0.025 0.20"
@@ -170,27 +95,18 @@
             material="wood_dark" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- AREA RUG  -  flat under coffee table -->
     <body name="rug" pos="0 0.8 0.005">
-      <geom name="rug_field" type="box"
-            size="1.10 0.80 0.005"
+      <geom name="rug_field" type="box" size="1.10 0.80 0.005"
             material="rug_mat" contype="0" conaffinity="0"/>
-      <geom name="rug_border_n" type="box" pos="0 0.80 0.006"
-            size="1.10 0.05 0.005"
+      <geom name="rug_border_n" type="box" pos="0 0.80 0.006" size="1.10 0.05 0.005"
             material="rug_border" contype="0" conaffinity="0"/>
-      <geom name="rug_border_s" type="box" pos="0 -0.80 0.006"
-            size="1.10 0.05 0.005"
+      <geom name="rug_border_s" type="box" pos="0 -0.80 0.006" size="1.10 0.05 0.005"
             material="rug_border" contype="0" conaffinity="0"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- BOOKSHELF  -  tall narrow against west wall -->
     <body name="bookshelf" pos="-2.5 1.5 0.0">
-      <geom name="bookshelf_body" type="box"
-            pos="0 0 0.75" size="0.20 0.40 0.75"
+      <geom name="bookshelf_body" type="box" pos="0 0 0.75" size="0.20 0.40 0.75"
             material="wood_light" contype="1" conaffinity="1"/>
-      <!-- shelf colored stripes (visual only) -->
       <geom name="shelf_1" type="box" pos="0.05 0 0.30" size="0.16 0.38 0.02"
             material="wood_dark" contype="0" conaffinity="0"/>
       <geom name="shelf_2" type="box" pos="0.05 0 0.75" size="0.16 0.38 0.02"
@@ -199,98 +115,61 @@
             material="wood_dark" contype="0" conaffinity="0"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- CAT TREE  -  3 platforms cascading up: 0.30 / 0.65 / 1.00 m -->
     <body name="cat_tree" pos="-1.5 -1.5 0.0">
-      <!-- Central post -->
-      <geom name="cattree_post" type="cylinder"
-            pos="0 0 0.55" size="0.05 0.55"
+      <geom name="cattree_post" type="cylinder" pos="0 0 0.55" size="0.05 0.55"
             material="catpost_mat" contype="1" conaffinity="1"/>
-      <!-- Lower platform -->
-      <geom name="cattree_lvl1" type="box"
-            pos="0.18 0 0.30" size="0.20 0.20 0.025"
+      <geom name="cattree_lvl1" type="box" pos="0.18 0 0.30" size="0.20 0.20 0.025"
             material="cattree_top" contype="1" conaffinity="1"/>
-      <!-- Middle platform -->
-      <geom name="cattree_lvl2" type="box"
-            pos="-0.18 0 0.65" size="0.20 0.20 0.025"
+      <geom name="cattree_lvl2" type="box" pos="-0.18 0 0.65" size="0.20 0.20 0.025"
             material="cattree_top" contype="1" conaffinity="1"/>
-      <!-- Top platform -->
-      <geom name="cattree_lvl3" type="box"
-            pos="0.0 0 1.00" size="0.22 0.22 0.025"
+      <geom name="cattree_lvl3" type="box" pos="0.0 0 1.00" size="0.22 0.22 0.025"
             material="cattree_top" contype="1" conaffinity="1"/>
-      <!-- Rope wrap (visual only) -->
-      <geom name="cattree_rope_a" type="cylinder"
-            pos="0 0 0.15" size="0.07 0.10"
+      <geom name="cattree_rope_a" type="cylinder" pos="0 0 0.15" size="0.07 0.10"
             material="cattree_rope" contype="0" conaffinity="0"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- SCRATCHING POST -->
     <body name="scratching_post" pos="1.5 -1.5 0.0">
-      <geom name="scratch_pole" type="cylinder"
-            pos="0 0 0.30" size="0.05 0.30"
+      <geom name="scratch_pole" type="cylinder" pos="0 0 0.30" size="0.05 0.30"
             material="catpost_mat" contype="1" conaffinity="1"/>
-      <geom name="scratch_top" type="sphere"
-            pos="0 0 0.62" size="0.07"
+      <geom name="scratch_top" type="sphere" pos="0 0 0.62" size="0.07"
             material="couch_fabric" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- FOOD + WATER BOWLS  -  at -y -x corner, kitchen-ish -->
     <body name="food_bowl" pos="-2.3 -2.0 0.0">
-      <geom name="food_bowl_geom" type="cylinder"
-            pos="0 0 0.025" size="0.10 0.025"
+      <geom name="food_bowl_geom" type="cylinder" pos="0 0 0.025" size="0.10 0.025"
             material="bowl_mat" contype="1" conaffinity="1"/>
     </body>
     <body name="water_bowl" pos="-2.0 -2.0 0.0">
-      <geom name="water_bowl_geom" type="cylinder"
-            pos="0 0 0.025" size="0.10 0.025"
+      <geom name="water_bowl_geom" type="cylinder" pos="0 0 0.025" size="0.10 0.025"
             material="bowl_mat" contype="1" conaffinity="1"/>
-      <geom name="water_surface" type="cylinder"
-            pos="0 0 0.045" size="0.085 0.005"
+      <geom name="water_surface" type="cylinder" pos="0 0 0.045" size="0.085 0.005"
             material="water_mat" contype="0" conaffinity="0"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- BALL  -  free-floating play target. -->
     <body name="ball" pos="0.0 0.5 0.10">
       <joint name="ball_joint" type="free"/>
-      <geom name="ball_geom"
-            type="sphere"
-            size="0.06"
-            material="ball_mat"
-            contype="1" conaffinity="1"
-            density="60"
-            friction="0.4 0.005 0.0001"/>
+      <geom name="ball_geom" type="sphere" size="0.06" material="ball_mat"
+            contype="1" conaffinity="1" density="60" friction="0.4 0.005 0.0001"/>
     </body>
 
-    <!-- =================================================================== -->
-    <!-- WINDOW REGION (warm tag) -->
-    <site name="window_region"
-          pos="-2.5 0.0 0.01"
-          size="0.45 0.8 0.005"
-          type="box"
-          material="window_mat"
-          group="1"/>
-
-    <!-- cat_eye camera injected into base body via assets-dict patching;
-         see _patched_go2_mjx_xml() in physics_cat.py. -->
+    <site name="window_region" pos="-2.5 0.0 0.01" size="0.45 0.8 0.005"
+          type="box" material="window_mat" group="1"/>
   </worldbody>
 
   <sensor>
-    <velocimeter name="local_linvel"    site="imu"/>
-    <framezaxis  name="upvector"        objtype="site" objname="imu"/>
-    <framexaxis  name="forwardvector"   objtype="site" objname="imu"/>
-    <framepos    name="position"        objtype="site" objname="imu"/>
-
-    <framelinvel name="FR_foot_global_linvel" objtype="site" objname="FR_foot"/>
-    <framelinvel name="FL_foot_global_linvel" objtype="site" objname="FL_foot"/>
-    <framelinvel name="RR_foot_global_linvel" objtype="site" objname="RR_foot"/>
-    <framelinvel name="RL_foot_global_linvel" objtype="site" objname="RL_foot"/>
-    <framepos    name="FR_foot_pos"           objtype="site" objname="FR_foot"/>
-    <framepos    name="FL_foot_pos"           objtype="site" objname="FL_foot"/>
-    <framepos    name="RR_foot_pos"           objtype="site" objname="RR_foot"/>
-    <framepos    name="RL_foot_pos"           objtype="site" objname="RL_foot"/>
+    <gyro         name="gyro"          site="imu"/>
+    <velocimeter  name="local_linvel"  site="imu"/>
+    <framezaxis   name="upvector"      objtype="site" objname="imu"/>
+    <framexaxis   name="forwardvector" objtype="site" objname="imu"/>
+    <framepos     name="position"      objtype="site" objname="imu"/>
+    <framelinvel name="FR_foot_global_linvel" objtype="body" objname="FR_foot"/>
+    <framelinvel name="FL_foot_global_linvel" objtype="body" objname="FL_foot"/>
+    <framelinvel name="RR_foot_global_linvel" objtype="body" objname="RR_foot"/>
+    <framelinvel name="RL_foot_global_linvel" objtype="body" objname="RL_foot"/>
+    <framepos    name="FR_foot_pos"           objtype="body" objname="FR_foot"/>
+    <framepos    name="FL_foot_pos"           objtype="body" objname="FL_foot"/>
+    <framepos    name="RR_foot_pos"           objtype="body" objname="RR_foot"/>
+    <framepos    name="RL_foot_pos"           objtype="body" objname="RL_foot"/>
   </sensor>
 
   <include file="sensor_feet.xml"/>

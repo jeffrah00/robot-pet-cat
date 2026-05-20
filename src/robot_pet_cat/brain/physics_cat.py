@@ -63,7 +63,14 @@ from .go2_policy import (
 DEFAULT_BASE_SPAWN_Z = 0.32
 
 # Name of the Go2 base body in menagerie's go2_mjx.xml.
-GO2_BASE_BODY = "base"
+GO2_BASE_BODY = "base_link"
+
+# Software PD gains matching unitree_rl_mjlab training config (FL,FR,RL,RR x hip,thigh,calf).
+import numpy as _np_pd
+_KP     = _np_pd.array([20,20,40, 20,20,40, 20,20,40, 20,20,40], dtype=_np_pd.float64)
+_KD     = _np_pd.array([1, 1, 2,  1, 1, 2,  1, 1, 2,  1, 1, 2 ], dtype=_np_pd.float64)
+_EFFORT = _np_pd.array([23.5,23.5,45, 23.5,23.5,45, 23.5,23.5,45, 23.5,23.5,45], dtype=_np_pd.float64)
+
 
 
 def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
@@ -81,8 +88,8 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
     """
     import re
 
-    KEY = "go2_mjx.xml"
-    if KEY not in assets:
+    KEY = next((k for k in ("go2.xml", "go2_mjx.xml") if k in assets), None)
+    if KEY is None:
         return assets
     text = assets[KEY].decode("utf-8")
     if "cat_eye" in text:
@@ -98,7 +105,7 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
         'type="sphere" group="2" rgba="1 0.5 0.5 0.6"/>'
     )
     new_text, n = re.subn(
-        r'(<body name="base"[^>]*>)',
+        r'(<body name="(?:base|base_link)"[^>]*>)',
         r'\1' + cam_block,
         text,
         count=1,
@@ -235,7 +242,7 @@ class PhysicsCat:
         self._last_cmd_arr = np.zeros(3, dtype=np.float32)
         # Pose ramp state (for tanh interpolation in joint_targets bypass).
         self._pose_ramp_step = 0
-        self._pose_start_ctrl = np.zeros(12, dtype=np.float32)
+        self._pose_start_pos = np.zeros(12, dtype=np.float32)
         self._last_pose_key: bytes | None = None
 
     # ------------------------------------------------------------------ #
@@ -295,10 +302,8 @@ class PhysicsCat:
             qpos[self._joint_qpos_adr[i]] = float(GO2_DEFAULT_JOINT_POS[i])
             qvel[self._joint_qvel_adr[i]] = 0.0
 
-        # Clear ctrl too (otherwise stale targets from last episode survive).
+        # Clear ctrl (motor actuators: start with zero torque).
         mj_data.ctrl[:] = 0.0
-        for i in range(12):
-            mj_data.ctrl[self._actuator_ids[i]] = float(GO2_DEFAULT_JOINT_POS[i])
 
         mujoco.mj_forward(self.mj_model, mj_data)
 
@@ -339,14 +344,18 @@ class PhysicsCat:
                 if key != self._last_pose_key:
                     self._pose_ramp_step = 0
                     for _i in range(12):
-                        self._pose_start_ctrl[_i] = mj_data.ctrl[self._actuator_ids[_i]]
+                        self._pose_start_pos[_i] = mj_data.qpos[self._joint_qpos_adr[_i]]
                     self._last_pose_key = key
                 t = min(self._pose_ramp_step / _RAMP, 1.0)
                 alpha = math.tanh(3.0 * t) / math.tanh(3.0)
                 for i in range(12):
-                    start = float(self._pose_start_ctrl[i])
-                    target = float(pose_targets[i])
-                    mj_data.ctrl[self._actuator_ids[i]] = start + alpha * (target - start)
+                    start = float(self._pose_start_pos[i])
+                tgt_pos = start + alpha * (float(pose_targets[i]) - start)
+                q  = mj_data.qpos[self._joint_qpos_adr[i]]
+                dq = mj_data.qvel[self._joint_qvel_adr[i]]
+                torque = _KP[i] * (tgt_pos - q) + _KD[i] * (0.0 - dq)
+                torque = float(max(-_EFFORT[i], min(_EFFORT[i], torque)))
+                mj_data.ctrl[self._actuator_ids[i]] = torque
                 self._pose_ramp_step += 1
             elif substep % self.cfg.decimation == 0:
                 # Walker policy: build obs, infer action, compute targets.
@@ -355,7 +364,11 @@ class PhysicsCat:
                 self._last_action = np.asarray(action, dtype=np.float32)
                 targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
                 for i in range(12):
-                    mj_data.ctrl[self._actuator_ids[i]] = float(targets[i])
+                q  = mj_data.qpos[self._joint_qpos_adr[i]]
+                dq = mj_data.qvel[self._joint_qvel_adr[i]]
+                torque = _KP[i] * (float(targets[i]) - q) + _KD[i] * (0.0 - dq)
+                torque = float(max(-_EFFORT[i], min(_EFFORT[i], torque)))
+                mj_data.ctrl[self._actuator_ids[i]] = torque
 
             mujoco.mj_step(self.mj_model, mj_data)
 

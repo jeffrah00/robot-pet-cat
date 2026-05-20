@@ -9,6 +9,14 @@ from typing import Any
 from robot_pet_cat.motion import go2_constants as consts
 
 
+def _unitree_mujoco_go2_dir() -> Path | None:
+    """Prefer /workspace/unitree_mujoco when available (RunPod pods)."""
+    candidate = Path('/workspace/unitree_mujoco/unitree_robots/go2')
+    if (candidate / 'go2.xml').is_file():
+        return candidate
+    return None
+
+
 def _menagerie_go2_dir() -> Path:
     """Locate mujoco_menagerie's unitree_go2 directory at runtime."""
     import os
@@ -90,7 +98,7 @@ def get_assets() -> dict[str, bytes]:
         if p.is_file() and p.suffix in {".xml", ".stl", ".obj"}:
             assets[p.name] = p.read_bytes()
 
-    go2_dir = _menagerie_go2_dir()
+    go2_dir = _unitree_mujoco_go2_dir() or _menagerie_go2_dir()
     for p in go2_dir.rglob("*"):
         if p.is_file() and p.suffix.lower() in {".xml", ".stl", ".obj", ".png", ".jpg"}:
             assets.setdefault(p.name, p.read_bytes())
