@@ -169,7 +169,7 @@ def main() -> int:
                                     width=args.width_eye,
                                     height=args.height_eye)
 
-    base_id = mujoco.mj_name2id(env.mj_model, mujoco.mjtObj.mjOBJ_BODY, "base")
+    base_id = mujoco.mj_name2id(env.mj_model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
     chase = mujoco.MjvCamera()
     chase.type = mujoco.mjtCamera.mjCAMERA_TRACKING
     chase.trackbodyid = base_id
