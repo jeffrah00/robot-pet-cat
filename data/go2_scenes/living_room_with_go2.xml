@@ -37,7 +37,7 @@
 <mujoco model="living_room_with_go2_v1">
   <include file="go2_mjx.xml"/>
 
-  <option timestep="0.005" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <option timestep="0.005" gravity="0 0 -9.81" integrator="implicitfast" impratio="100"/>
 
   <statistic center="0 0 0.3" extent="3.0" meansize=".05"/>
 

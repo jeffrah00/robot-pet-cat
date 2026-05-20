@@ -109,6 +109,17 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
             "inject cat_eye camera."
         )
     assets[KEY] = new_text.encode("utf-8")
+
+    #  Physics transplant from unitree_mujoco 
+    # Patch joint defaults: damping 2->0.1, add frictionloss=0.2, kd 0.5->3.5
+    text2 = assets[KEY].decode("utf-8")
+    # joint damping 2 -> 0.1
+    text2 = text2.replace('damping="2"', 'damping="0.1"')
+    # add frictionloss=0.2 after armature=0.01 on the default joint line
+    text2 = text2.replace('armature="0.01"/>', 'armature="0.01" frictionloss="0.2"/>')
+    # kd 0.5 -> 3.5 in biasprm
+    text2 = text2.replace('biasprm="0 -50 -0.5"', 'biasprm="0 -50 -3.5"')
+    assets[KEY] = text2.encode("utf-8")
     return assets
 
 
@@ -222,6 +233,10 @@ class PhysicsCat:
         self._last_speed = 0.0
         # Last command issued (for the policy's `command` channel).
         self._last_cmd_arr = np.zeros(3, dtype=np.float32)
+        # Pose ramp state (for tanh interpolation in joint_targets bypass).
+        self._pose_ramp_step = 0
+        self._pose_start_ctrl = np.zeros(12, dtype=np.float32)
+        self._last_pose_key: bytes | None = None
 
     # ------------------------------------------------------------------ #
     # KinematicCat-compatible properties
@@ -290,11 +305,9 @@ class PhysicsCat:
         self._last_action = np.zeros(12, dtype=np.float32)
         self._last_cmd_arr = np.zeros(3, dtype=np.float32)
         self._phase_time = 0.0
+        self._pose_ramp_step = 0
+        self._last_pose_key = None
         self._refresh_pose_cache(mj_data)
-        # Pose interpolation state (smoothly blend joint targets over 3s)
-        self._jt_interp_start = None   # ctrl values at transition start
-        self._jt_target = None          # current target
-        self._jt_interp_frac = 1.0     # 0=start, 1=arrived
 
     def step(self, mj_data, cmd: LocomotionCommand, dt: float) -> None:
         """Advance physics by `dt`, driving the Go2 via the walker policy.
@@ -309,33 +322,32 @@ class PhysicsCat:
         cmd_arr = self._command_to_twist(cmd)
         self._last_cmd_arr = cmd_arr
 
-        # Resolve joint targets once per step if provided, with 3s smoothstep interpolation.
-        pose_targets = None
+        # Resolve joint targets once per step if provided.
+        pose_targets: Optional[np.ndarray] = None
         if cmd.joint_targets is not None:
-            _new = np.asarray(cmd.joint_targets, dtype=np.float64)
-            assert _new.shape == (12,), f"joint_targets must be shape (12,), got {_new.shape}"
-            if self._jt_target is None or not np.allclose(_new, self._jt_target, atol=1e-4):
-                self._jt_interp_start = np.array(
-                    [mj_data.ctrl[self._actuator_ids[i]] for i in range(12)], dtype=np.float64
-                )
-                self._jt_target = _new.copy()
-                self._jt_interp_frac = 0.0
-            self._jt_interp_frac = min(1.0, self._jt_interp_frac + 1.0 / 60.0)
-            _t = self._jt_interp_frac
-            _ts = _t * _t * (3.0 - 2.0 * _t)  # smoothstep
-            pose_targets = (
-                self._jt_interp_start + _ts * (self._jt_target - self._jt_interp_start)
-            ).astype(np.float32)
-        else:
-            self._jt_target = None
-            self._jt_interp_frac = 1.0
+            pose_targets = np.asarray(cmd.joint_targets, dtype=np.float32)
+            assert pose_targets.shape == (12,), (
+                f"joint_targets must be shape (12,), got {pose_targets.shape}"
+            )
 
         n_substeps = max(1, int(round(dt / self.cfg.physics_dt)))
         for substep in range(n_substeps):
             if pose_targets is not None:
-                # Keyframe pose control: directly set PD targets, skip policy.
+                # Keyframe pose control: tanh ramp over ~100 substeps (~0.5 s).
+                _RAMP = 100
+                key = pose_targets.tobytes()
+                if key != self._last_pose_key:
+                    self._pose_ramp_step = 0
+                    for _i in range(12):
+                        self._pose_start_ctrl[_i] = mj_data.ctrl[self._actuator_ids[_i]]
+                    self._last_pose_key = key
+                t = min(self._pose_ramp_step / _RAMP, 1.0)
+                alpha = math.tanh(3.0 * t) / math.tanh(3.0)
                 for i in range(12):
-                    mj_data.ctrl[self._actuator_ids[i]] = float(pose_targets[i])
+                    start = float(self._pose_start_ctrl[i])
+                    target = float(pose_targets[i])
+                    mj_data.ctrl[self._actuator_ids[i]] = start + alpha * (target - start)
+                self._pose_ramp_step += 1
             elif substep % self.cfg.decimation == 0:
                 # Walker policy: build obs, infer action, compute targets.
                 obs = self._build_observation(mj_data, cmd_arr)
