@@ -679,22 +679,30 @@ class BrainEnv:
             self.mj_data.qvel[offset + 1] = ny * self.cfg.swat_ball_impulse_mps
             self._swat_ball_hit = True  # one-shot: don't re-hit this activation
 
-    def _decay_ball_velocity(self, decay_per_s: float) -> None:
-        decay = decay_per_s ** self.cfg.dt_s
-        for offset in self._free_joint_qvel_offset.values():
-            self.mj_data.qvel[offset : offset + 3] *= decay
+    def _decay_ball_velocity(self, ball_id: int) -> None:
+        """Apply rolling friction to the ball each step."""
+        import mujoco
+        jnt_name = f"ball_{ball_id}_joint"
+        jnt_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, jnt_name)
+        if jnt_id < 0:
+            return
+        qadr = self.mj_model.jnt_qposadr[jnt_id]
+        vadr = self.mj_model.jnt_dofadr[jnt_id]
+        vel = self.mj_data.qvel[vadr : vadr + 3]
+        speed = float(np.linalg.norm(vel))
+        if speed > 1e-4:
+            friction = min(speed, self.cfg.ball_rolling_friction * self.cfg.physics_dt)
+            self.mj_data.qvel[vadr : vadr + 3] = vel * (1.0 - friction / speed)
+        else:
+            self.mj_data.qvel[vadr : vadr + 3] = 0.0
 
-    def _find_free_joint_for_body(self, body_name: str):
-        mujoco = self._mujoco
-        bid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-        if bid < 0:
-            return None
-        njnt = int(self.mj_model.njnt)
-        for jid in range(njnt):
-            if self.mj_model.jnt_bodyid[jid] != bid:
-                continue
-            if self.mj_model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
-                continue
-            n = mujoco.mj_id2name(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, jid)
-            return n if n else None
-        return None
+    def _find_free_joint_for_body(self, body_name: str) -> str:
+        """Return the name of the free joint attached to body_name, or empty string."""
+        import mujoco
+        body_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        if body_id < 0:
+            return ""
+        for j in range(self.mj_model.njnt):
+            if self.mj_model.jnt_bodyid[j] == body_id and self.mj_model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
+                return mujoco.mj_id2name(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, j) or ""
+        return ""

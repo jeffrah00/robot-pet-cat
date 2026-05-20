@@ -165,7 +165,8 @@ def main() -> int:
         max_steps_per_episode=total_steps + 50,
     )
     env = BrainEnv(cfg)
-    obs, _ = env.reset()
+    _reset = env.reset()
+    obs = _reset[0] if isinstance(_reset, tuple) else _reset
 
     # ------------------------------------------------------------------ #
     # Set up renderer
@@ -173,7 +174,7 @@ def main() -> int:
     import mujoco
     import mujoco.renderer
 
-    W, W_eye = args.width, args.width // 3
+    W, W_eye = args.width, (args.width // 3) & ~1
     H = args.height
     renderer = mujoco.renderer.Renderer(env.mj_model, height=H, width=W)
     renderer_eye = mujoco.renderer.Renderer(env.mj_model, height=H // 2, width=W_eye)
