@@ -230,4 +230,22 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
         tensorboard_log=str(cfg.log_dir) if cfg.log_dir else None,
     )
 
-    model.learn
+    model.learn(
+        total_timesteps=cfg.total_timesteps,
+        callback=callbacks,
+        progress_bar=False,
+    )
+
+    if cfg.save_model_to is not None:
+        cfg.save_model_to.parent.mkdir(parents=True, exist_ok=True)
+        model.save(cfg.save_model_to)
+        print(f"[runner] saved -> {cfg.save_model_to}")
+
+    try:
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
+    except Exception:
+        pass
+
+    return model
