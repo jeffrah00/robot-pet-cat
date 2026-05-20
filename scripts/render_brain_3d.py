@@ -73,13 +73,10 @@ MOOD_NAMES = [
 
 
 SCRIPTED_SCHEDULE_S = [
-    (0.0,  "walk_to"),   # cat explores the room
-    (5.0,  "look_at"),   # cat spots the ball
-    (9.0,  "swat"),      # cat bats the ball
-    (13.0, "walk_to"),   # cat moves toward the cat tree
-    (17.0, "jump_to"),   # cat jumps onto platform!
-    (24.0, "sit"),       # cat sits on the platform
-    (28.0, "stretch"),   # morning stretch up top
+    (0.0,  "walk_to"),    # settle into stand
+    (3.0,  "lie_down"),   # descend to park pose (7.5s ramp)
+    (12.0, "get_up"),     # reverse-ramp back to standing (7.5s)
+    (21.0, "walk_to"),    # walker takes over, drive to target
 ]
 
 

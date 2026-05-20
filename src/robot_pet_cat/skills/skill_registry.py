@@ -30,6 +30,7 @@ from .skill_policy import Skill
 from .stretch import Stretch
 from .walk_to import WalkTo
 from .jump_to import JumpTo
+from .get_up import GetUp
 
 
 def _build_skills() -> dict[str, Skill]:
@@ -42,6 +43,7 @@ def _build_skills() -> dict[str, Skill]:
         "crouch": Crouch(),
         "look_at": LookAt(),
         "jump_to": JumpTo(),
+        "get_up": GetUp(),
     }
 
 
@@ -56,6 +58,7 @@ SKILL_NAMES: tuple[str, ...] = (
     "crouch",
     "look_at",
     "jump_to",
+    "get_up",
 )
 
 SKILL_INDEX: dict[str, int] = {name: i for i, name in enumerate(SKILL_NAMES)}
