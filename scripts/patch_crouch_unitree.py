@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Surgical patcher for crouch task scaffold.
 
-Run from /workspace/unitree_rl_mjlab on the pod.
+Run from /workspace/unitree_rl_mjlab on the pod. Idempotent — safe to re-run.
+
+Preconditions:
+  - The upstream `src/tasks/velocity/` directory exists.
+  - Either `src/tasks/crouch/` does not exist (the patcher copies it from
+    velocity), or it has already been patched (re-running is a no-op for
+    most steps).
 
 Edits:
   - src/tasks/crouch/crouch_env_cfg.py:
@@ -33,13 +39,53 @@ After running, the patcher prints a summary of what changed.
 """
 from __future__ import annotations
 import re
+import shutil
 from pathlib import Path
 
+VELOCITY = Path("src/tasks/velocity")
 ROOT = Path("src/tasks/crouch")
 ENV_CFG = ROOT / "crouch_env_cfg.py"
 REWARDS_PY = ROOT / "mdp" / "rewards.py"
 GO2_ENV_CFGS = ROOT / "config" / "go2" / "env_cfgs.py"
 GO2_INIT = ROOT / "config" / "go2" / "__init__.py"
+
+# Non-go2 robot configs to remove from the crouch package (we only need go2).
+NON_GO2_ROBOTS = ["a2", "as2", "g1", "g1_23dof", "h1_2", "h2", "r1", "x2"]
+
+
+def bootstrap_crouch_from_velocity() -> None:
+    """Copy src/tasks/velocity -> src/tasks/crouch if crouch doesn't yet exist.
+
+    Renames velocity_env_cfg.py -> crouch_env_cfg.py. Drops the rl/ folder
+    (the velocity OnPolicyRunner is imported directly by the crouch go2
+    __init__.py).
+    """
+    if ROOT.exists():
+        return
+    assert VELOCITY.exists(), f"missing {VELOCITY}"
+    shutil.copytree(VELOCITY, ROOT)
+    # Rename env cfg
+    src = ROOT / "velocity_env_cfg.py"
+    if src.exists():
+        src.rename(ENV_CFG)
+    # Drop rl/ (we use velocity's runner)
+    rl_dir = ROOT / "rl"
+    if rl_dir.exists():
+        shutil.rmtree(rl_dir)
+    # Drop pycache
+    for p in ROOT.rglob("__pycache__"):
+        shutil.rmtree(p, ignore_errors=True)
+    print(f"bootstrapped {ROOT} from {VELOCITY}")
+
+
+def prune_non_go2_robots() -> None:
+    """Remove robot config subdirs we don't need (only go2 is in scope)."""
+    cfg_dir = ROOT / "config"
+    for robot in NON_GO2_ROBOTS:
+        d = cfg_dir / robot
+        if d.exists():
+            shutil.rmtree(d)
+            print(f"removed {d}")
 
 
 def remove_dict_entry(text: str, key: str) -> str:
@@ -102,6 +148,11 @@ def remove_commands_dict(text: str) -> str:
 
 def patch_env_cfg() -> None:
     text = ENV_CFG.read_text()
+    # Idempotency: if the factory is already renamed, assume the rest of
+    # the env_cfg patches were already applied and skip.
+    if "def make_crouch_env_cfg(" in text:
+        print(f"{ENV_CFG}: already patched, skipping")
+        return
 
     # 1. Rename factory.
     text = text.replace(
@@ -205,7 +256,7 @@ def base_height_target(
     Returns a positive value (penalty applied via negative weight in cfg).
     """
     asset: Entity = env.scene[asset_cfg.name]
-    base_z = asset.data.root_pos_w[:, 2]
+    base_z = asset.data.root_link_pos_w[:, 2]
     return torch.square(base_z - target_height)
 
 
@@ -238,6 +289,10 @@ def patch_rewards_py() -> None:
 
 def patch_go2_env_cfgs() -> None:
     text = GO2_ENV_CFGS.read_text()
+    # Idempotency: detect already-patched file via the renamed factory.
+    if "def unitree_go2_crouch_env_cfg(" in text:
+        print(f"{GO2_ENV_CFGS}: already patched, skipping")
+        return
     # 1. Update import path.
     text = text.replace(
         "from src.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg",
@@ -254,12 +309,24 @@ def patch_go2_env_cfgs() -> None:
         '"""Create Unitree Go2 rough terrain velocity configuration."""',
         '"""Create Unitree Go2 crouch task configuration."""',
     )
-    # 4. Strip the pose-reward customisation block (4 lines wide).
-    # Pattern: from `cfg.rewards["pose"].params["std_standing"] = {` up to its
-    # closing `}` line, plus the std_walking and std_running blocks that
-    # follow. Easiest path: drop all `cfg.rewards["pose"]` lines AND the
-    # blocks they open.
+    # 4. Strip customisations targeting removed rewards. `pose` opens a dict
+    # literal so it needs the block-aware strip; the others are one-liners.
     text = strip_pose_customisation(text)
+    for removed in [
+        "foot_gait",
+        "foot_clearance",
+        "foot_slip",
+        "track_linear_velocity",
+        "track_angular_velocity",
+        "stand_still",
+        "soft_landing",
+    ]:
+        text = re.sub(
+            r'^\s*cfg\.rewards\["' + re.escape(removed) + r'"\].*\n',
+            "",
+            text,
+            flags=re.MULTILINE,
+        )
     # 5. Drop the `if play: twist_cmd = cfg.commands["twist"] ...` block.
     text = strip_play_twist_block(text)
     # 6. Drop the unitree_go2_flat_env_cfg function (we only need the rough
@@ -344,76 +411,4 @@ def strip_flat_fn(text: str) -> str:
         if lines[i].startswith("def unitree_go2_flat_env_cfg("):
             # Skip until next top-level def or end of file
             j = i + 1
-            while j < len(lines):
-                if lines[j].startswith("def ") or lines[j].startswith("class "):
-                    break
-                j += 1
-            i = j
-            continue
-        out.append(lines[i])
-        i += 1
-    return "".join(out)
-
-
-def force_flat_terrain(text: str) -> str:
-    """Insert a 'force flat terrain' block right before `return cfg` in the
-    crouch env factory. Idempotent — checks for a sentinel comment first."""
-    sentinel = "# crouch: force flat terrain"
-    if sentinel in text:
-        return text
-    insertion = (
-        f"\n  {sentinel}\n"
-        "  if cfg.scene.terrain is not None:\n"
-        '    cfg.scene.terrain.terrain_type = "plane"\n'
-        "    cfg.scene.terrain.terrain_generator = None\n"
-        "  cfg.scene.sensors = tuple(\n"
-        '    s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"\n'
-        "  )\n"
-        '  cfg.observations["actor"].terms.pop("height_scan", None)\n'
-        '  cfg.observations["critic"].terms.pop("height_scan", None)\n'
-        '  cfg.curriculum.pop("terrain_levels", None)\n\n'
-    )
-    return text.replace("  return cfg\n", insertion + "  return cfg\n", 1)
-
-
-GO2_INIT_NEW = '''"""Unitree Go2 crouch task registration."""
-
-from mjlab.tasks.registry import register_mjlab_task
-
-# Reuse the velocity OnPolicyRunner — it's task-agnostic.
-from src.tasks.velocity.rl import VelocityOnPolicyRunner
-
-from .env_cfgs import unitree_go2_crouch_env_cfg
-from .rl_cfg import unitree_go2_ppo_runner_cfg
-
-
-register_mjlab_task(
-  task_id="Unitree-Go2-Crouch",
-  env_cfg=unitree_go2_crouch_env_cfg(),
-  play_env_cfg=unitree_go2_crouch_env_cfg(play=True),
-  rl_cfg=unitree_go2_ppo_runner_cfg(),
-  runner_cls=VelocityOnPolicyRunner,
-)
-'''
-
-
-def patch_go2_init() -> None:
-    GO2_INIT.write_text(GO2_INIT_NEW)
-    print(f"patched {GO2_INIT}")
-
-
-def main() -> None:
-    assert ENV_CFG.exists(), f"missing {ENV_CFG}"
-    assert REWARDS_PY.exists(), f"missing {REWARDS_PY}"
-    assert GO2_ENV_CFGS.exists(), f"missing {GO2_ENV_CFGS}"
-    assert GO2_INIT.exists(), f"missing {GO2_INIT}"
-
-    patch_env_cfg()
-    patch_rewards_py()
-    patch_go2_env_cfgs()
-    patch_go2_init()
-    print("all patches applied")
-
-
-if __name__ == "__main__":
-    main()
+            while j < len
