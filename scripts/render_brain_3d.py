@@ -214,6 +214,7 @@ def main() -> int:
     from robot_pet_cat.brain.env import BrainEnv, BrainEnvConfig
     from robot_pet_cat.brain.attractor import Attractor, ModePolicy, ModePolicyConfig
     from robot_pet_cat.skills.skill_policy import LocomotionCommand
+    from robot_pet_cat.brain.gym_env import obs_dict_to_curiosity_vec
 
     # --- Build the env ------------------------------------------------- #
     mode_policy = None
@@ -270,7 +271,8 @@ def main() -> int:
     t_loop = time.perf_counter()
     for step in range(args.steps):
         if ppo_model is not None:
-            action, _ = ppo_model.predict(obs, deterministic=False)
+            flat_obs = obs_dict_to_curiosity_vec(obs)
+            action, _ = ppo_model.predict(flat_obs, deterministic=False)
             action = int(action)
         else:
             action = _scripted_action(env.t_sim, env)
@@ -327,13 +329,4 @@ def main() -> int:
         )
         draw.text((w_main + 8, y_off + 6), "cat_eye (POV)",
                   fill=(255, 255, 255, 240), font=font)
-        canvas = np.array(im)
-
-        writer.append_data(canvas)
-
-     
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+       
