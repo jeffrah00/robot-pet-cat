@@ -679,4 +679,22 @@ class BrainEnv:
             self.mj_data.qvel[offset + 1] = ny * self.cfg.swat_ball_impulse_mps
             self._swat_ball_hit = True  # one-shot: don't re-hit this activation
 
-    def _decay_ba
+    def _decay_ball_velocity(self, decay_per_s: float) -> None:
+        decay = decay_per_s ** self.cfg.dt_s
+        for offset in self._free_joint_qvel_offset.values():
+            self.mj_data.qvel[offset : offset + 3] *= decay
+
+    def _find_free_joint_for_body(self, body_name: str):
+        mujoco = self._mujoco
+        bid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        if bid < 0:
+            return None
+        njnt = int(self.mj_model.njnt)
+        for jid in range(njnt):
+            if self.mj_model.jnt_bodyid[jid] != bid:
+                continue
+            if self.mj_model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+                continue
+            n = mujoco.mj_id2name(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, jid)
+            return n if n else None
+        return None
