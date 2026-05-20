@@ -329,4 +329,13 @@ def main() -> int:
         )
         draw.text((w_main + 8, y_off + 6), "cat_eye (POV)",
                   fill=(255, 255, 255, 240), font=font)
-       
+        canvas = np.array(im)
+
+        writer.append_data(canvas)
+
+    writer.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
