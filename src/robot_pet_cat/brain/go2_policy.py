@@ -209,20 +209,24 @@ class _TorchWalkerPolicy:
 
         # Pull out actor and obs_normalizer weights. Strip rsl_rl prefixes.
         actor_weights: dict = {}
-        for k, v in sd.items():
-            # rsl_rl 2.x: keys look like "actor.0.weight", "actor.2.weight", ...
-            if k.startswith("actor."):
-                actor_weights[k[len("actor."):]] = v
-            elif k.startswith("policy.actor."):
-                actor_weights[k[len("policy.actor."):]] = v
-            elif k.startswith("obs_normalizer.") or k.startswith("normalizer."):
-                tail = k.split(".", 1)[1]
-                if tail in ("running_mean", "mean"):
-                    self.normalizer_mean = v.to(self.device)
-                    self._has_normalizer = True
-                elif tail in ("running_var", "var"):
-                    self.normalizer_var = v.to(self.device)
-                    self._has_normalizer = True
+        # unitree_rl_mjlab format: actor weights stored directly under actor_state_dict
+        if "actor_state_dict" in blob:
+            actor_weights = dict(blob["actor_state_dict"])
+        else:
+            for k, v in sd.items():
+                # rsl_rl 2.x: keys look like "actor.0.weight", "actor.2.weight", ...
+                if k.startswith("actor."):
+                    actor_weights[k[len("actor."):]] = v
+                elif k.startswith("policy.actor."):
+                    actor_weights[k[len("policy.actor."):]] = v
+                elif k.startswith("obs_normalizer.") or k.startswith("normalizer."):
+                    tail = k.split(".", 1)[1]
+                    if tail in ("running_mean", "mean"):
+                        self.normalizer_mean = v.to(self.device)
+                        self._has_normalizer = True
+                    elif tail in ("running_var", "var"):
+                        self.normalizer_var = v.to(self.device)
+                        self._has_normalizer = True
 
         if not actor_weights:
             raise RuntimeError(
