@@ -56,6 +56,9 @@ class BrainTrainConfig:
     # behavioral variability. 0.05-0.1 is the cat-friendly range; do not
     # decay this. See memory: cats-are-stochastic.
     ent_coef: float = 0.05
+    # PPO clipping range. SB3 default is 0.2; 0.1 slows policy updates and
+    # helps prevent collapse when the reward signal is sparse / skewed.
+    clip_range: float = 0.2
     policy_kwargs: Optional[dict] = None  # e.g. dict(net_arch=[64,64])
     device: str = "cpu"
     seed: Optional[int] = None
@@ -199,6 +202,7 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
                     "total_timesteps": cfg.total_timesteps,
                     "n_steps": cfg.n_steps,
                     "batch_size": cfg.batch_size,
+                    "clip_range": cfg.clip_range,
                     "curiosity_enabled": cfg.env_cfg.curiosity_enabled,
                     "curiosity_w": cfg.composite_cfg.curiosity_w,
                     "comfort_w": cfg.composite_cfg.comfort_w,
@@ -218,6 +222,7 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
         n_epochs=cfg.n_epochs,
         learning_rate=cfg.learning_rate,
         ent_coef=cfg.ent_coef,
+        clip_range=cfg.clip_range,
         policy_kwargs=cfg.policy_kwargs,
         device=cfg.device,
         seed=cfg.seed,
@@ -225,10 +230,4 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
         tensorboard_log=str(cfg.log_dir) if cfg.log_dir else None,
     )
 
-    model.learn(total_timesteps=cfg.total_timesteps, callback=callbacks)
-
-    if cfg.save_model_to is not None:
-        cfg.save_model_to.parent.mkdir(parents=True, exist_ok=True)
-        model.save(str(cfg.save_model_to))
-
-    return model
+    model.learn

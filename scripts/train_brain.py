@@ -40,7 +40,11 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=3.0e-4)
     p.add_argument("--ent-coef", type=float, default=0.05,
                    help="PPO entropy coefficient. Default 0.05 keeps the "
-                        "policy stochastic; see memory cats-are-stochastic.")
+                        "policy stochastic; see memory cats-are-stochastic. "
+                        "Use 0.1 when the policy collapses to one skill.")
+    p.add_argument("--clip-range", type=float, default=0.2,
+                   help="PPO clip range. SB3 default 0.2; use 0.1 to slow "
+                        "policy updates and resist collapse.")
     p.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--curiosity", action="store_true",
@@ -122,6 +126,7 @@ def main() -> None:
         n_epochs=args.n_epochs,
         learning_rate=args.lr,
         ent_coef=args.ent_coef,
+        clip_range=args.clip_range,
         device=args.device,
         seed=args.seed,
         log_dir=Path(args.log_dir) if args.log_dir else None,
@@ -136,7 +141,7 @@ def main() -> None:
 
     print(f"[train_brain] starting run: steps={args.steps}, "
           f"curiosity={args.curiosity}, curiosity_w={args.curiosity_w}, "
-          f"ent_coef={args.ent_coef}, play_w={args.play_w}, "
+          f"ent_coef={args.ent_coef}, clip_range={args.clip_range}, play_w={args.play_w}, "
           f"attractor={'ON' if mode_policy else 'OFF'}, "
           f"min_dwell={args.mode_min_dwell}, "
           f"mode_soft_pass={args.mode_soft_pass}, "
