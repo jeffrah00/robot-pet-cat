@@ -1,26 +1,22 @@
 """crouch -- pre-pounce low-and-still pose.
 
-All four legs bend deeper than standing, lowering the center of mass. The
-weight shifts slightly forward (front legs less bent than rear, so the
-front stays lower relative to the haunches). This matches feline crouching
-behavior where the cat compresses before launching.
-
-The stillness IS the skill: a crouching cat is almost motionless, sometimes
-for many seconds, with only minor head/eye motion.
+All four legs bend deeper than standing, lowering the center of mass.
+Weight is evenly distributed -- front and rear folds are matched to keep
+the robot planted without tipping forward.
 
 Joint targets (FL/FR/RL/RR, hip/thigh/calf per leg):
 
-  Front legs: deep bend, weight forward.
+  Front legs: moderate bend, even weight.
     hip   = +-0.10  (near-default splay)
-    thigh =  1.20   (forward + down, deeper than stand's 0.90)
-    calf  = -2.30   (more bent)
+    thigh =  1.00   (moderate forward bend, was 1.20 -- reduced to prevent forward tip)
+    calf  = -2.00   (moderate bend, was -2.30)
 
-  Rear legs: even deeper, haunches lowered.
+  Rear legs: slightly deeper, haunches lowered.
     hip   = +-0.10
-    thigh =  1.45   (rear haunches pulled further under)
-    calf  = -2.55
+    thigh =  1.20   (rear haunches pulled under, was 1.45)
+    calf  = -2.30   (moderately deep, was -2.55)
 
-This emits joint_targets directly; PhysicsCat bypasses the walker policy.
+Reduced from v1 to prevent forward CoM tip. All 4 feet stay planted.
 """
 
 from __future__ import annotations
@@ -36,10 +32,10 @@ from .skill_policy import LocomotionCommand, Skill
 #              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
 CROUCH_JOINT_TARGETS = np.array(
     [
-        -0.10,  1.20, -2.30,   # FL: deep front bend, weight forward
-        +0.10,  1.20, -2.30,   # FR
-        -0.10,  1.45, -2.55,   # RL: rear haunches lower
-        +0.10,  1.45, -2.55,   # RR
+        -0.10,  1.00, -2.00,   # FL: moderate front bend (was 1.20, -2.30)
+        +0.10,  1.00, -2.00,   # FR
+        -0.10,  1.20, -2.30,   # RL: rear haunches lower (was 1.45, -2.55)
+        +0.10,  1.20, -2.30,   # RR
     ],
     dtype=np.float32,
 )
@@ -56,7 +52,7 @@ class Crouch(Skill):
             vy=0.0,
             yaw_rate=0.0,
             gait="stand",
-            body_height=0.17,
+            body_height=0.20,
             joint_targets=CROUCH_JOINT_TARGETS,
         )
 

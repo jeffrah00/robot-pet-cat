@@ -1,27 +1,25 @@
 """stretch -- front-legs-extended wake-up stretch, transient.
 
-The front legs sweep forward and straighten (thigh well forward, calf less
-bent) while the rear legs hold their standing position, keeping the haunches
-elevated. This produces the classic feline "downward dog" stretch where the
-chest is low and the rump stays up.
+The front legs sweep forward and straighten while the rear legs hold their
+standing position, keeping the haunches elevated. Produces the feline
+"downward dog" stretch where the chest is low and the rump stays up.
 
 Unlike sit/lie_down/crouch, stretch has a natural duration: a cat stretches
-for ~2 s then relaxes. The skill signals is_done() after the duration so
-the brain switches away automatically.
+for ~2s then relaxes. The skill signals is_done() after the duration.
 
 Joint targets (FL/FR/RL/RR, hip/thigh/calf per leg):
 
-  Front legs: swept forward, relatively straight -- chest drops.
+  Front legs: swept moderately forward, partially straightened.
     hip   = +-0.10  (near-default splay)
-    thigh =  1.80   (leg swept far forward, angled down/out)
-    calf  = -0.80   (less bent -- more open knee for straighter leg)
+    thigh =  1.50   (leg swept forward, was 1.80 -- reduced to prevent forward tip)
+    calf  = -1.40   (moderate bend, was -0.80 -- more bent = less forward pitch)
 
   Rear legs: standard standing -- haunches stay up.
     hip   = +-0.10
     thigh =  0.85   (near default 0.90)
     calf  = -1.80   (default)
 
-This emits joint_targets directly; PhysicsCat bypasses the walker policy.
+Reduced from v1 to keep all 4 feet planted without pitching forward.
 """
 
 from __future__ import annotations
@@ -39,8 +37,8 @@ from .skill_policy import LocomotionCommand, Skill
 #              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
 STRETCH_JOINT_TARGETS = np.array(
     [
-        -0.10,  1.80, -0.80,   # FL: swept forward, straightened
-        +0.10,  1.80, -0.80,   # FR: swept forward, straightened
+        -0.10,  1.50, -1.40,   # FL: swept forward, moderately straight (was 1.80, -0.80)
+        +0.10,  1.50, -1.40,   # FR: swept forward, moderately straight
         -0.10,  0.85, -1.80,   # RL: near-default, haunches up
         +0.10,  0.85, -1.80,   # RR: near-default, haunches up
     ],
@@ -74,7 +72,7 @@ class Stretch(Skill):
             vy=0.0,
             yaw_rate=0.0,
             gait="stand",
-            body_height=0.22,
+            body_height=0.24,
             joint_targets=STRETCH_JOINT_TARGETS,
         )
 
@@ -83,10 +81,6 @@ class Stretch(Skill):
             return False
         duration = self._unpack_goal(goal)
         return (self._now(obs) - self._start_t) >= duration
-
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _unpack_goal(goal: Any) -> float:
@@ -98,6 +92,5 @@ class Stretch(Skill):
 
     @staticmethod
     def _now(obs: dict[str, Any]) -> float:
-        """Sim time if available in obs, else wall-clock."""
         t = obs.get("t_sim")
         return float(t) if t is not None else time.monotonic()

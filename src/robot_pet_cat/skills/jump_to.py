@@ -4,28 +4,22 @@ State machine:
   APPROACH  -- walk toward the platform approach point
   ALIGN     -- rotate in place to face the platform
   CROUCH    -- lower body for CROUCH_DURATION_S (charge phase)
-  LAUNCH    -- one step: BrainEnv injects ballistic impulse
-  AIRBORNE  -- stand still while physics handles the arc (~1s)
+  LAUNCH    -- joint trajectory: legs extend (push-off pose, ~0.3s)
+  AIRBORNE  -- joint trajectory: legs tucked (mid-arc pose, ~1.2s)
+  LAND      -- joint trajectory: legs bent deep (shock absorb, ~0.5s)
   PERCH     -- landed; skill is done
+
+JOINT-TRAJECTORY IMPLEMENTATION (no physics impulse):
+  Phases LAUNCH/AIRBORNE/LAND use joint_targets rather than a ballistic
+  impulse. The robot stays on the ground but goes through the visual
+  motions of a jump -- stable for showcase purposes. Full RL training
+  (Atanassov 2024 curriculum) is the Phase 3 goal.
 
 Platform geometry is hardcoded from data/go2_scenes/living_room_with_go2.xml:
   <body name="cat_tree" pos="-1.5 -1.5 0.0">
-    <geom name="cattree_lvl1" pos=" 0.18 0 0.30" size="0.20 0.20 0.025" .../>
-    <geom name="cattree_lvl2" pos="-0.18 0 0.65" size="0.20 0.20 0.025" .../>
-    <geom name="cattree_lvl3" pos=" 0.00 0 1.00" size="0.22 0.22 0.025" .../>
-
-BrainEnv checks JumpTo.launch_requested each step (parallel to the swat-impulse
-check). When True it calls PhysicsCat.apply_launch_impulse(mj_data, target_xyz),
-then calls JumpTo.advance_to_airborne() to flip the skill into the AIRBORNE phase.
-
-This skill uses keyframe driving for phases 1-3 and a physics impulse for the
-actual jump arc (Tier 2 mixed approach). Full RL training (Atanassov 2024
-curriculum) is the Phase 3 goal; this scripted version gives us a working
-visual + obs signal in the meantime.
-
-References:
-- Atanassov et al. 2024, "Curriculum-Based Reinforcement Learning for
-  Quadrupedal Jumping" -- https://arxiv.org/abs/2401.16337
+    <geom name="cattree_lvl1" pos=" 0.18 0 0.30" .../>
+    <geom name="cattree_lvl2" pos="-0.18 0 0.65" .../>
+    <geom name="cattree_lvl3" pos=" 0.00 0 1.00" .../>
 """
 
 from __future__ import annotations
@@ -42,12 +36,10 @@ from .skill_policy import LocomotionCommand, Skill
 
 # ---------------------------------------------------------------------------
 # Cat-tree platform geometry (world frame).
-# Body at (-1.5, -1.5, 0.0). Top-surface z = geom_pos_z + half_height.
 # ---------------------------------------------------------------------------
 
 CAT_TREE_BODY_XY: tuple[float, float] = (-1.5, -1.5)
 
-# Each platform entry: world_xyz of its top surface, plus approach geometry.
 PLATFORMS: list[dict] = [
     {
         "name": "lvl1",
@@ -72,10 +64,51 @@ PLATFORMS: list[dict] = [
 DEFAULT_PLATFORM_IDX = 0
 
 # Phase timing knobs.
-APPROACH_GOAL_TOL: float = 0.15   # m -- approach done within this radius
-ALIGN_GOAL_TOL: float = 0.15      # rad -- aligned within this heading error
-CROUCH_DURATION_S: float = 0.8    # s -- crouch-charge duration
-AIRBORNE_DURATION_S: float = 1.2  # s -- wait for physics arc to complete
+APPROACH_GOAL_TOL: float = 0.15   # m
+ALIGN_GOAL_TOL: float = 0.15      # rad
+CROUCH_DURATION_S: float = 0.8    # s -- charge phase
+LAUNCH_DURATION_S: float = 0.30   # s -- push-off pose hold
+AIRBORNE_DURATION_S: float = 1.2  # s -- mid-arc tuck hold
+LAND_DURATION_S: float = 0.50     # s -- landing absorb hold
+
+# ---------------------------------------------------------------------------
+# Joint trajectory poses for the fake-jump sequence.
+# Joint order: FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf,
+#              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
+# ---------------------------------------------------------------------------
+
+# Push-off: all legs extended (lower than stand, pushing into ground).
+LAUNCH_TARGETS = np.array(
+    [
+        -0.10,  0.50, -0.80,   # FL: extended, push-off
+        +0.10,  0.50, -0.80,   # FR: extended
+        -0.10,  0.50, -0.80,   # RL: extended, push-off
+        +0.10,  0.50, -0.80,   # RR: extended
+    ],
+    dtype=np.float32,
+)
+
+# Mid-arc: legs tucked under the body.
+AIRBORNE_TARGETS = np.array(
+    [
+        -0.15,  0.80, -1.80,   # FL: front tucked
+        +0.15,  0.80, -1.80,   # FR: front tucked
+        -0.10,  1.20, -2.20,   # RL: rear pulled up
+        +0.10,  1.20, -2.20,   # RR: rear pulled up
+    ],
+    dtype=np.float32,
+)
+
+# Landing absorb: all legs bent deep to absorb impact.
+LAND_TARGETS = np.array(
+    [
+        -0.10,  1.00, -2.00,   # FL: shock absorb
+        +0.10,  1.00, -2.00,   # FR: shock absorb
+        -0.10,  1.10, -2.10,   # RL: shock absorb
+        +0.10,  1.10, -2.10,   # RR: shock absorb
+    ],
+    dtype=np.float32,
+)
 
 
 def _wrap_angle(a: float) -> float:
@@ -88,7 +121,8 @@ class JumpPhase(enum.IntEnum):
     CROUCH = 2
     LAUNCH = 3
     AIRBORNE = 4
-    PERCH = 5
+    LAND = 5
+    PERCH = 6
 
 
 @dataclass(frozen=True)
@@ -99,13 +133,12 @@ class JumpToGoal:
 
 
 class JumpTo(Skill):
-    """Multi-phase scripted jump onto a cat-tree platform.
+    """Multi-phase scripted jump sequence using joint trajectories (no impulse).
 
-    Phases: APPROACH -> ALIGN -> CROUCH -> LAUNCH -> AIRBORNE -> PERCH.
+    Phases: APPROACH -> ALIGN -> CROUCH -> LAUNCH -> AIRBORNE -> LAND -> PERCH.
 
-    BrainEnv watches `skill.launch_requested` and calls
-    `PhysicsCat.apply_launch_impulse(mj_data, target_xyz)` on the one
-    LAUNCH step, then calls `skill.advance_to_airborne()` to continue.
+    No physics impulse is applied. The robot goes through the visual motions
+    of a jump while staying stable on the ground.
     """
 
     name: str = "jump_to"
@@ -116,22 +149,22 @@ class JumpTo(Skill):
         self._target: dict = PLATFORMS[DEFAULT_PLATFORM_IDX]
 
     # ------------------------------------------------------------------ #
-    # Properties checked by BrainEnv
+    # Properties kept for backward compatibility with BrainEnv.
+    # launch_requested always returns False -- no impulse will be applied.
     # ------------------------------------------------------------------ #
 
     @property
     def launch_requested(self) -> bool:
-        """True on the one LAUNCH step -- BrainEnv injects the impulse."""
-        return self._phase == JumpPhase.LAUNCH
+        """Always False -- impulse-based jump replaced by joint trajectory."""
+        return False
 
     @property
     def target_xyz(self) -> tuple[float, float, float]:
         return tuple(self._target["world_xyz"])  # type: ignore[return-value]
 
     def advance_to_airborne(self) -> None:
-        """Called by BrainEnv immediately after injecting the impulse."""
-        self._phase = JumpPhase.AIRBORNE
-        self._phase_timer = 0.0
+        """No-op -- auto-advance handled internally by phase timer."""
+        pass
 
     # ------------------------------------------------------------------ #
     # Skill interface
@@ -143,11 +176,9 @@ class JumpTo(Skill):
 
     def step(self, obs: dict[str, Any], goal: Any) -> LocomotionCommand:
         dt = float(obs.get("dt", 0.05))
-
         root_xy = np.asarray(obs["root_xy"], dtype=np.float32)
         root_yaw = float(obs["root_yaw"])
 
-        # Resolve which platform to target from the goal.
         self._target = self._pick_target(goal)
 
         if self._phase == JumpPhase.APPROACH:
@@ -157,15 +188,33 @@ class JumpTo(Skill):
         if self._phase == JumpPhase.CROUCH:
             return self._step_crouch(dt)
         if self._phase == JumpPhase.LAUNCH:
-            # BrainEnv will intercept and inject the impulse this tick.
-            # Lean forward as a visual cue.
-            return LocomotionCommand(vx=0.3, gait="leap")
+            self._phase_timer += dt
+            if self._phase_timer >= LAUNCH_DURATION_S:
+                self._phase = JumpPhase.AIRBORNE
+                self._phase_timer = 0.0
+            return LocomotionCommand(
+                vx=0.0, vy=0.0, yaw_rate=0.0, gait="stand",
+                body_height=0.28,
+                joint_targets=LAUNCH_TARGETS,
+            )
         if self._phase == JumpPhase.AIRBORNE:
             self._phase_timer += dt
             if self._phase_timer >= AIRBORNE_DURATION_S:
+                self._phase = JumpPhase.LAND
+                self._phase_timer = 0.0
+            return LocomotionCommand(
+                vx=0.0, vy=0.0, yaw_rate=0.0, gait="stand",
+                joint_targets=AIRBORNE_TARGETS,
+            )
+        if self._phase == JumpPhase.LAND:
+            self._phase_timer += dt
+            if self._phase_timer >= LAND_DURATION_S:
                 self._phase = JumpPhase.PERCH
-            return LocomotionCommand(gait="stand")
-        # PERCH
+            return LocomotionCommand(
+                vx=0.0, vy=0.0, yaw_rate=0.0, gait="stand",
+                joint_targets=LAND_TARGETS,
+            )
+        # PERCH -- stand normally
         return LocomotionCommand(gait="stand")
 
     def is_done(self, obs: dict[str, Any], goal: Any) -> bool:
@@ -210,18 +259,13 @@ class JumpTo(Skill):
         if self._phase_timer >= CROUCH_DURATION_S:
             self._phase = JumpPhase.LAUNCH
             self._phase_timer = 0.0
-            return LocomotionCommand(gait="leap")
+            return LocomotionCommand(gait="stand")
         frac = self._phase_timer / CROUCH_DURATION_S
-        body_height = 0.30 - frac * 0.12  # drop 0.30 -> 0.18 m during charge
+        body_height = 0.30 - frac * 0.10
         return LocomotionCommand(body_height=body_height, gait="stand")
-
-    # ------------------------------------------------------------------ #
-    # Goal helper
-    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _pick_target(goal: Any) -> dict:
-        """Pick nearest hardcoded platform to the given JumpToGoal, or default."""
         if isinstance(goal, JumpToGoal):
             gx, gy, gz = goal.surface_xyz
             best = PLATFORMS[DEFAULT_PLATFORM_IDX]

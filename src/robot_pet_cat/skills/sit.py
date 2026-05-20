@@ -1,24 +1,23 @@
 """sit -- static sitting pose, held until the brain switches skills.
 
 The Go2 approximates a cat sit: front legs remain roughly vertical (upright)
-while the rear legs fold deeply under the haunches, dropping the rear of the
-body toward the floor. This is the closest the Go2's joint configuration can
-get to a feline sitting posture.
+while the rear legs fold partially under the haunches, dropping the rear of
+the body toward the floor.
 
 Joint targets (FL/FR/RL/RR, hip/thigh/calf per leg):
 
-  Front legs (FL=0-2, FR=3-5): semi-upright, thigh slightly forward.
-    hip  = +-0.10  (symmetric, slight abduction)
-    thigh = 0.45   (less forward than stand's 0.90 -- more vertical)
-    calf  = -0.90  (less bent -- straighter front legs)
+  Front legs (FL=0-2, FR=3-5): slightly more forward than stand.
+    hip   = +-0.10  (symmetric, slight abduction)
+    thigh =  0.55   (gentle forward angle, more vertical than stand's 0.90)
+    calf  = -1.20   (moderate bend -- front legs act as pillars)
 
-  Rear legs (RL=6-8, RR=9-11): haunches folded under the body.
-    hip  = +-0.20  (slight outward splay for stability)
-    thigh = 1.55   (deeply forward -- haunches pulled under)
-    calf  = -2.65  (fully bent)
+  Rear legs (RL=6-8, RR=9-11): partial haunches fold, weight balanced.
+    hip   = +-0.15  (slight outward splay for stability)
+    thigh =  1.20   (partial fold -- conservative, was 1.55)
+    calf  = -2.20   (moderately bent -- was -2.65)
 
-This emits joint_targets directly; PhysicsCat bypasses the walker policy
-and uses PD control to hold the pose.
+Reduced from v1 to prevent rear tipping. Robot stays balanced with weight
+distributed across all four contact points.
 """
 
 from __future__ import annotations
@@ -34,10 +33,10 @@ from .skill_policy import LocomotionCommand, Skill
 #              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
 SIT_JOINT_TARGETS = np.array(
     [
-        -0.10,  0.45, -0.90,   # FL: semi-upright front leg
-        +0.10,  0.45, -0.90,   # FR: semi-upright front leg
-        -0.20,  1.55, -2.65,   # RL: haunches folded under
-        +0.20,  1.55, -2.65,   # RR: haunches folded under
+        -0.10,  0.55, -1.20,   # FL: semi-upright, slight forward lean
+        +0.10,  0.55, -1.20,   # FR: semi-upright, slight forward lean
+        -0.15,  1.20, -2.20,   # RL: partial haunch fold (conservative)
+        +0.15,  1.20, -2.20,   # RR: partial haunch fold (conservative)
     ],
     dtype=np.float32,
 )
@@ -54,11 +53,9 @@ class Sit(Skill):
             vy=0.0,
             yaw_rate=0.0,
             gait="stand",
-            body_height=0.22,
+            body_height=0.25,
             joint_targets=SIT_JOINT_TARGETS,
         )
 
     def is_done(self, obs: dict[str, Any], goal: Any) -> bool:
-        # Sitting is a hold pose -- the brain decides when to exit. Never
-        # spontaneously "done" from the skill's own perspective.
         return False

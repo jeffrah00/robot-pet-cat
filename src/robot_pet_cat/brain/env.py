@@ -131,7 +131,6 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
     """Choose a sensible goal for a skill from scene + cat position."""
     from robot_pet_cat.skills.look_at import LookAtGoal
     from robot_pet_cat.skills.stretch import StretchGoal
-    from robot_pet_cat.skills.swat import SwatGoal
     from robot_pet_cat.skills.walk_to import WalkToGoal
 
     if skill_name in ("sit", "lie_down", "crouch"):
@@ -148,10 +147,6 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
         if play is not None:
             return LookAtGoal(point_xyz=tuple(float(v) for v in play.pos_xyz))
         return LookAtGoal(point_xyz=(1.0, 0.0, 0.3))
-    if skill_name == "swat":
-        if play is not None:
-            return SwatGoal(point_xyz=tuple(float(v) for v in play.pos_xyz))
-        return SwatGoal(point_xyz=(1.0, 0.0, 0.1))
     if skill_name == "jump_to":
         from robot_pet_cat.skills.jump_to import JumpToGoal
         if elev is not None:
@@ -175,7 +170,6 @@ class BrainEnvConfig:
     initial_body_height: float = 0.30
     flag_config: Optional[dict] = None
     movable_bodies: tuple = ("ball",)
-    swat_ball_impulse_mps: float = 0.8
     mode_policy: Optional[ModePolicy] = None
     # Soft action mask under attractor modes. Probability of letting an
     # out-of-mode action through INSTEAD of forcing it to HOLD. 0.0 ==
@@ -336,13 +330,6 @@ class BrainEnv:
         # to 0 so step 0 is always a decision.
         self._last_action: int = HOLD_ACTION
         self._steps_until_decision: int = 0
-        # One-shot swat impulse guard: tracks whether we have already
-        # applied the ball impulse in the current swat activation.
-        # Resets when a new swat skill is dispatched. Prevents the
-        # ball from getting hammered at 0.8 m/s every physics step
-        # (which can cause contact-constraint explosions if the ball is
-        # against a wall or obstacle).
-        self._swat_ball_hit: bool = False
         # Joint id lookup for free-joint bodies
         self._free_joint_qvel_offset: dict = {}
         for body_name in self.movable_bodies:
@@ -385,7 +372,6 @@ class BrainEnv:
         self.last_reward_breakdown = {}
         self._last_action = HOLD_ACTION
         self._steps_until_decision = 0
-        self._swat_ball_hit = False
         obs = self._observe()
         # Seed the prev-feature buffer so the first step has a feat_t.
         if self.curiosity is not None:
@@ -487,18 +473,11 @@ class BrainEnv:
             self.registry.reset(new_skill_name)
             self.active_skill_name = new_skill_name
             self.time_in_skill = 0.0
-            # Reset swat one-shot flag on any skill switch (swat or away from swat).
-            self._swat_ball_hit = False
-
+    
         # Get command this tick
         cmd = self._command_from_active_skill()
 
         if self.cfg.use_physics_cat:
-            # Inject swat impulse BEFORE physics so mj_step integrates it
-            # naturally during the cat's many substeps. Real contacts and
-            # friction handle the rest -- no manual decay needed.
-            if self.active_skill_name == "swat":
-                self._maybe_apply_swat_impulse()
             if self.active_skill_name == "jump_to":
                 self._maybe_apply_jump_impulse()
             self.cat.step(self.mj_data, cmd, self.cfg.dt_s)
@@ -507,8 +486,6 @@ class BrainEnv:
             # ball motion via qvel injection + manual decay + mj_forward
             # (no mj_step is called in this path).
             self.cat.step(cmd, self.cfg.dt_s)
-            if self.active_skill_name == "swat":
-                self._maybe_apply_swat_impulse()
             self._decay_ball_velocity(decay_per_s=0.9)
             self._mujoco.mj_forward(self.mj_model, self.mj_data)
 
@@ -657,27 +634,6 @@ class BrainEnv:
             self.cat.body_height = tz
         skill.advance_to_airborne()
 
-    def _maybe_apply_swat_impulse(self) -> None:
-        # One-shot: only hit the ball once per swat activation. This
-        # prevents the ball from getting re-hit at 0.8 m/s every step
-        # if it lingers within range (e.g., pinned against a wall),
-        # which can generate large contact constraint forces.
-        if self._swat_ball_hit:
-            return
-        scene_state = self._extract_scene_state()
-        for ent in scene_state.filter(play_target=True):
-            if ent.name not in self._free_joint_qvel_offset:
-                continue
-            dx = float(ent.pos_xyz[0] - self.cat.xy[0])
-            dy = float(ent.pos_xyz[1] - self.cat.xy[1])
-            d = float(math.hypot(dx, dy))
-            if d > 0.4 or d < 1e-3:
-                continue
-            offset = self._free_joint_qvel_offset[ent.name]
-            nx, ny = dx / d, dy / d
-            self.mj_data.qvel[offset + 0] = nx * self.cfg.swat_ball_impulse_mps
-            self.mj_data.qvel[offset + 1] = ny * self.cfg.swat_ball_impulse_mps
-            self._swat_ball_hit = True  # one-shot: don't re-hit this activation
 
     def _decay_ball_velocity(self, ball_id: int) -> None:
         """Apply rolling friction to the ball each step."""
