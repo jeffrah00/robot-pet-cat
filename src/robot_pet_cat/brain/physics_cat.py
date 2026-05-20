@@ -364,11 +364,11 @@ class PhysicsCat:
                 self._last_action = np.asarray(action, dtype=np.float32)
                 targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
                 for i in range(12):
-                q  = mj_data.qpos[self._joint_qpos_adr[i]]
-                dq = mj_data.qvel[self._joint_qvel_adr[i]]
-                torque = _KP[i] * (float(targets[i]) - q) + _KD[i] * (0.0 - dq)
-                torque = float(max(-_EFFORT[i], min(_EFFORT[i], torque)))
-                mj_data.ctrl[self._actuator_ids[i]] = torque
+                    q  = mj_data.qpos[self._joint_qpos_adr[i]]
+                    dq = mj_data.qvel[self._joint_qvel_adr[i]]
+                    torque = _KP[i] * (float(targets[i]) - q) + _KD[i] * (0.0 - dq)
+                    torque = float(max(-_EFFORT[i], min(_EFFORT[i], torque)))
+                    mj_data.ctrl[self._actuator_ids[i]] = torque
 
             mujoco.mj_step(self.mj_model, mj_data)
 
