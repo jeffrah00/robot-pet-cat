@@ -158,14 +158,11 @@ def main() -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
     from robot_pet_cat.brain.env import BrainEnv, BrainEnvConfig
-    from robot_pet_cat.brain.attractor import AttractorConfig
 
     cfg = BrainEnvConfig(
-        policy_path=str(policy_path),
+        walker_policy_path=policy_path,
         use_physics_cat=True,
         max_steps_per_episode=total_steps + 50,
-        attractor=AttractorConfig(enabled=False),
-        initial_attractor_mode="PLAYING",
     )
     env = BrainEnv(cfg)
     obs, _ = env.reset()
