@@ -227,12 +227,12 @@ def main() -> int:
     if not args.scripted and Path(args.checkpoint).is_file():
         try:
             from stable_baselines3 import PPO
-            from robot_pet_cat.brain.gym_env import make_brain_gym_env
 
             _log(f"loading PPO checkpoint {args.checkpoint}")
-            # We need a gym_env shim that matches the trained obs shape.
-            gym_env = make_brain_gym_env(cfg)
-            ppo_model = PPO.load(args.checkpoint, env=gym_env)
+            # Load on CPU only -- no env= arg so we don't spin up a second
+            # PhysicsCat (which re-loads the ONNX walker and can segfault).
+            # SB3 doesn't need an env for inference-only loading.
+            ppo_model = PPO.load(args.checkpoint, device="cpu")
             _log("  loaded; using PPO actions")
         except Exception as e:
             _log(f"  could not load checkpoint ({type(e).__name__}: {e}); "
