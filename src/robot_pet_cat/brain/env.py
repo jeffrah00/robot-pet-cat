@@ -336,6 +336,13 @@ class BrainEnv:
         # to 0 so step 0 is always a decision.
         self._last_action: int = HOLD_ACTION
         self._steps_until_decision: int = 0
+        # One-shot swat impulse guard: tracks whether we have already
+        # applied the ball impulse in the current swat activation.
+        # Resets when a new swat skill is dispatched. Prevents the
+        # ball from getting hammered at 0.8 m/s every physics step
+        # (which can cause contact-constraint explosions if the ball is
+        # against a wall or obstacle).
+        self._swat_ball_hit: bool = False
         # Joint id lookup for free-joint bodies
         self._free_joint_qvel_offset: dict = {}
         for body_name in self.movable_bodies:
@@ -378,6 +385,7 @@ class BrainEnv:
         self.last_reward_breakdown = {}
         self._last_action = HOLD_ACTION
         self._steps_until_decision = 0
+        self._swat_ball_hit = False
         obs = self._observe()
         # Seed the prev-feature buffer so the first step has a feat_t.
         if self.curiosity is not None:
@@ -479,6 +487,8 @@ class BrainEnv:
             self.registry.reset(new_skill_name)
             self.active_skill_name = new_skill_name
             self.time_in_skill = 0.0
+            # Reset swat one-shot flag on any skill switch (swat or away from swat).
+            self._swat_ball_hit = False
 
         # Get command this tick
         cmd = self._command_from_active_skill()
@@ -648,6 +658,12 @@ class BrainEnv:
         skill.advance_to_airborne()
 
     def _maybe_apply_swat_impulse(self) -> None:
+        # One-shot: only hit the ball once per swat activation. This
+        # prevents the ball from getting re-hit at 0.8 m/s every step
+        # if it lingers within range (e.g., pinned against a wall),
+        # which can generate large contact constraint forces.
+        if self._swat_ball_hit:
+            return
         scene_state = self._extract_scene_state()
         for ent in scene_state.filter(play_target=True):
             if ent.name not in self._free_joint_qvel_offset:
@@ -661,27 +677,6 @@ class BrainEnv:
             nx, ny = dx / d, dy / d
             self.mj_data.qvel[offset + 0] = nx * self.cfg.swat_ball_impulse_mps
             self.mj_data.qvel[offset + 1] = ny * self.cfg.swat_ball_impulse_mps
+            self._swat_ball_hit = True  # one-shot: don't re-hit this activation
 
-    def _decay_ball_velocity(self, decay_per_s: float) -> None:
-        decay = decay_per_s ** self.cfg.dt_s
-        for offset in self._free_joint_qvel_offset.values():
-            self.mj_data.qvel[offset : offset + 3] *= decay
-
-    # ------------------------------------------------------------------ #
-    # MuJoCo helpers
-    # ------------------------------------------------------------------ #
-
-    def _find_free_joint_for_body(self, body_name: str):
-        mujoco = self._mujoco
-        bid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-        if bid < 0:
-            return None
-        njnt = int(self.mj_model.njnt)
-        for jid in range(njnt):
-            if self.mj_model.jnt_bodyid[jid] != bid:
-                continue
-            if self.mj_model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
-                continue
-            n = mujoco.mj_id2name(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, jid)
-            return n if n else None
-        return None
+    def _decay_ba

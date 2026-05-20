@@ -447,6 +447,8 @@ class PhysicsCat:
 
         tx, ty, tz = target_xyz
         dz = max(0.0, tz - cur_z) + 0.08  # 8 cm clearance above platform
+        # Cap dz to prevent runaway vz if cur_z is weird (e.g. physics instability).
+        dz = min(dz, 0.5)  # max 50 cm effective rise -- gives vz ~ 3.1 m/s max
         vz = math.sqrt(2.0 * g * dz)
         t_peak = vz / g
         t_land = 2.0 * t_peak  # approximate total time of flight
@@ -471,7 +473,4 @@ class PhysicsCat:
         mujoco = self._mujoco
         sid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_SENSOR, name)
         if sid < 0:
-            if required:
-                raise RuntimeError(f"Sensor {name!r} not in compiled model.")
-            return -1
-        return int(self.mj_model.sensor_adr[sid])
+          

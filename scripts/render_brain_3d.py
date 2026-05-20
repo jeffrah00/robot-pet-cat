@@ -173,8 +173,10 @@ def main() -> int:
         help="Spawn xy of the cat in the room.",
     )
     p.add_argument(
-        "--mode-init", default="EXPLORING",
-        help="Initial Attractor mode for the brain. Pass NONE to disable mode_policy.",
+        "--mode-init", default="PLAYING",
+        help="Initial Attractor mode for the brain. Pass NONE to disable mode_policy. "
+             "Default is PLAYING so the PPO's preferred skills (swat/walk/jump) are "
+             "allowed without EXPLORING's mask interference.",
     )
     p.add_argument(
         "--no-mode-policy", action="store_true",
@@ -232,8 +234,9 @@ def main() -> int:
         initial_cat_xy=tuple(args.initial_xy),
         max_steps_per_episode=args.steps + 1,
         mode_policy=mode_policy,
-        decision_period_min_steps=40,
-        decision_period_max_steps=120,
+        decision_period_min_steps=60,   # ~3s per skill decision
+        decision_period_max_steps=160,  # ~8s max -- visible skill episodes
+        min_skill_duration_s=2.0,       # force each skill to persist >= 2s
     )
     _log("building BrainEnv with PhysicsCat (this loads the walker)...")
     t0 = time.perf_counter()
@@ -322,20 +325,4 @@ def main() -> int:
         im = Image.fromarray(canvas)
         draw = ImageDraw.Draw(im, "RGBA")
         # Border around eye view
-        draw.rectangle(
-            [(w_main, y_off - 1), (w_main + w_eye - 1, y_off + h_eye)],
-            outline=(255, 255, 255, 230),
-            width=2,
-        )
-        draw.text((w_main + 8, y_off + 6), "cat_eye (POV)",
-                  fill=(255, 255, 255, 240), font=font)
-        canvas = np.array(im)
-
-        writer.append_data(canvas)
-
-    writer.close()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+     
