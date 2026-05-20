@@ -29,10 +29,12 @@ from .skill_policy import LocomotionCommand, Skill
 #              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
 LIE_DOWN_JOINT_TARGETS = np.array(
     [
-        -0.30,  1.50, -2.65,   # FL: leg folded under, hip splayed
-        +0.30,  1.50, -2.65,   # FR: leg folded under, hip splayed
-        -0.30,  1.50, -2.65,   # RL: leg folded under
-        +0.30,  1.50, -2.65,   # RR: leg folded under
+        # Loaf pose: all four legs folded symmetrically under the body so the
+        # cat sinks onto its own folded legs. No leg extension -> no tipping.
+        -0.10,  1.50, -2.50,   # FL: hip neutral, thigh forward, calf tight
+        +0.10,  1.50, -2.50,   # FR
+        -0.10,  1.50, -2.50,   # RL
+        +0.10,  1.50, -2.50,   # RR
     ],
     dtype=np.float32,
 )

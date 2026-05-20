@@ -339,7 +339,7 @@ class PhysicsCat:
         for substep in range(n_substeps):
             if pose_targets is not None:
                 # Keyframe pose control: tanh ramp over ~100 substeps (~0.5 s).
-                _RAMP = 100
+                _RAMP = 1500
                 key = pose_targets.tobytes()
                 if key != self._last_pose_key:
                     self._pose_ramp_step = 0
@@ -347,7 +347,7 @@ class PhysicsCat:
                         self._pose_start_pos[_i] = mj_data.qpos[self._joint_qpos_adr[_i]]
                     self._last_pose_key = key
                 t = min(self._pose_ramp_step / _RAMP, 1.0)
-                alpha = math.tanh(3.0 * t) / math.tanh(3.0)
+                alpha = float(t)
                 for i in range(12):
                     start = float(self._pose_start_pos[i])
                 tgt_pos = start + alpha * (float(pose_targets[i]) - start)
