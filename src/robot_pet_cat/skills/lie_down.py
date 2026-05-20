@@ -1,25 +1,45 @@
-"""lie_down — belly-on-floor rest pose, held until the brain switches skills.
+"""lie_down -- belly-on-floor sphinx pose, held until the brain switches skills.
 
-Same pattern as sit but lower. The Go2 firmware has a built-in lie-down command
-(joint trajectory baked into the controller), so this stub mostly exists so the
-brain has a slot to dispatch into. The actual joint targets at integration time
-should match the firmware's choice, not invent a new one.
+All four legs fold under the body. The Go2 drops into a sphinx/prone posture:
+hips splayed slightly outward, thighs pulled forward, calves folded back under
+the body. This matches the Unitree SDK's built-in damp/fold trajectory.
+
+Joint targets (FL/FR/RL/RR, hip/thigh/calf per leg):
+
+  All legs fold symmetrically:
+    hip   = +-0.30  (wider splay than standing -- lets legs fold under)
+    thigh =  1.50   (deeply forward -- leg folds in against body)
+    calf  = -2.65   (near maximum bend)
+
+This emits joint_targets directly; PhysicsCat bypasses the walker policy
+and uses PD control to hold the pose. The trunk rests approximately 0.08 m
+above the floor once settled.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from .skill_policy import LocomotionCommand, Skill
 
 
-# Empirical placeholder. The Go2 lying pose puts the trunk ~8 cm above the
-# floor. Tune at integration time.
-LIE_DOWN_BODY_HEIGHT_M = 0.08
+# Joint order: FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf,
+#              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
+LIE_DOWN_JOINT_TARGETS = np.array(
+    [
+        -0.30,  1.50, -2.65,   # FL: leg folded under, hip splayed
+        +0.30,  1.50, -2.65,   # FR: leg folded under, hip splayed
+        -0.30,  1.50, -2.65,   # RL: leg folded under
+        +0.30,  1.50, -2.65,   # RR: leg folded under
+    ],
+    dtype=np.float32,
+)
 
 
 class LieDown(Skill):
-    """Belly-down rest pose. Held until brain switches."""
+    """Belly-down sphinx pose. Held until brain switches."""
 
     name: str = "lie_down"
 
@@ -29,7 +49,8 @@ class LieDown(Skill):
             vy=0.0,
             yaw_rate=0.0,
             gait="stand",
-            body_height=LIE_DOWN_BODY_HEIGHT_M,
+            body_height=0.08,
+            joint_targets=LIE_DOWN_JOINT_TARGETS,
         )
 
     def is_done(self, obs: dict[str, Any], goal: Any) -> bool:

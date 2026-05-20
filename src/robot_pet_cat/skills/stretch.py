@@ -1,29 +1,51 @@
-"""stretch — long forward leg extension, transient (cat-like wake-up stretch).
+"""stretch -- front-legs-extended wake-up stretch, transient.
 
-Unlike sit/lie_down, stretch has a *natural duration*: a cat stretches for ~2 s
-then relaxes back to whatever pose was before. The skill emits a transient
-extended pose for `duration_s`, then reports done so the brain switches away.
+The front legs sweep forward and straighten (thigh well forward, calf less
+bent) while the rear legs hold their standing position, keeping the haunches
+elevated. This produces the classic feline "downward dog" stretch where the
+chest is low and the rump stays up.
 
-Implementation note: the actual joint trajectory (front legs extended forward,
-shoulders dropped, hindquarters up) requires per-joint targets that the
-LocomotionCommand vocabulary doesn't currently express. For now we fake it with
-a slight body-height bump and let the brain switch out after duration. A future
-revision should add a per-skill joint-target field to LocomotionCommand or
-introduce a richer command object.
+Unlike sit/lie_down/crouch, stretch has a natural duration: a cat stretches
+for ~2 s then relaxes. The skill signals is_done() after the duration so
+the brain switches away automatically.
+
+Joint targets (FL/FR/RL/RR, hip/thigh/calf per leg):
+
+  Front legs: swept forward, relatively straight -- chest drops.
+    hip   = +-0.10  (near-default splay)
+    thigh =  1.80   (leg swept far forward, angled down/out)
+    calf  = -0.80   (less bent -- more open knee for straighter leg)
+
+  Rear legs: standard standing -- haunches stay up.
+    hip   = +-0.10
+    thigh =  0.85   (near default 0.90)
+    calf  = -1.80   (default)
+
+This emits joint_targets directly; PhysicsCat bypasses the walker policy.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
+
+import numpy as np
 
 from .skill_policy import LocomotionCommand, Skill
 
 
-# Empirical placeholder. Real value comes from observing the cat stretch clip
-# (`stretch_table.npz`) at integration time.
-STRETCH_BODY_HEIGHT_M = 0.32  # slightly above standing
+# Joint order: FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf,
+#              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
+STRETCH_JOINT_TARGETS = np.array(
+    [
+        -0.10,  1.80, -0.80,   # FL: swept forward, straightened
+        +0.10,  1.80, -0.80,   # FR: swept forward, straightened
+        -0.10,  0.85, -1.80,   # RL: near-default, haunches up
+        +0.10,  0.85, -1.80,   # RR: near-default, haunches up
+    ],
+    dtype=np.float32,
+)
 
 
 @dataclass
@@ -34,15 +56,11 @@ class StretchGoal:
 
 
 class Stretch(Skill):
-    """Hold an extended pose for a fixed duration, then signal done."""
+    """Hold an extended front-leg stretch for a fixed duration, then signal done."""
 
     name: str = "stretch"
 
     def __init__(self) -> None:
-        # `_start_t` is set on the first step() call after the skill is selected.
-        # The brain (or a wrapping dispatcher) should call .reset() when handing
-        # control to this skill to clear the timer; for now we lazy-init on first
-        # step and reset whenever is_done() returns True.
         self._start_t: float | None = None
 
     def reset(self) -> None:
@@ -56,7 +74,8 @@ class Stretch(Skill):
             vy=0.0,
             yaw_rate=0.0,
             gait="stand",
-            body_height=STRETCH_BODY_HEIGHT_M,
+            body_height=0.22,
+            joint_targets=STRETCH_JOINT_TARGETS,
         )
 
     def is_done(self, obs: dict[str, Any], goal: Any) -> bool:
@@ -79,7 +98,6 @@ class Stretch(Skill):
 
     @staticmethod
     def _now(obs: dict[str, Any]) -> float:
-        """Sim time if available in obs, else wall-clock. The brain populates
-        obs['t_sim'] when running inside the env; tests pass None."""
+        """Sim time if available in obs, else wall-clock."""
         t = obs.get("t_sim")
         return float(t) if t is not None else time.monotonic()

@@ -11,16 +11,23 @@ underneath it actually drives the Go2 in MuJoCo:
          walker dt 0.005 s.
       2. Every `decimation` (4) physics steps, builds the 48-dim observation
          and calls the walker policy to get the next 12-d action.
-      3. Writes joint position targets (default + 0.25*action) into mj_data.ctrl.
+         UNLESS cmd.joint_targets is set, in which case those are written
+         directly to ctrl (PD pose control, walker policy bypassed).
+      3. Writes joint position targets into mj_data.ctrl.
       4. Calls mujoco.mj_step.
       5. After all substeps, refreshes cached pose properties.
 
 LocomotionCommand mapping:
     cmd.vx / cmd.vy / cmd.yaw_rate go directly into the policy's
     `command` channel. cmd.gait == "stand" forces the command to zero
-    so the policy enters its stand pose. cmd.body_height and cmd.head_*
+    so the policy enters its stand-mask branch. cmd.body_height and cmd.head_*
     aren't part of the velocity walker's obs and are ignored at Tier 1
     (Tier 2 keyframes or a later head policy will handle them).
+
+    cmd.joint_targets (new): when not None, a 12-element array of absolute
+    joint positions (FL/FR/RL/RR x hip/thigh/calf). The walker policy is
+    skipped entirely and these targets drive the PD actuators directly. Use
+    for static keyframe poses: sit, lie_down, crouch, stretch.
 
 Reset:
     qpos for the base free joint = [x, y, z_spawn, quat_from_yaw(yaw)]
@@ -286,21 +293,37 @@ class PhysicsCat:
         self._refresh_pose_cache(mj_data)
 
     def step(self, mj_data, cmd: LocomotionCommand, dt: float) -> None:
-        """Advance physics by `dt`, driving the Go2 via the walker policy."""
+        """Advance physics by `dt`, driving the Go2 via the walker policy.
+
+        If cmd.joint_targets is not None, the walker policy is bypassed and
+        the given 12-dim absolute joint position targets are written directly
+        to ctrl every substep (PD keyframe pose control).
+        """
         mujoco = self._mujoco
 
         # Map LocomotionCommand -> 3-dim twist for the policy.
         cmd_arr = self._command_to_twist(cmd)
         self._last_cmd_arr = cmd_arr
 
+        # Resolve joint targets once per step if provided.
+        pose_targets: Optional[np.ndarray] = None
+        if cmd.joint_targets is not None:
+            pose_targets = np.asarray(cmd.joint_targets, dtype=np.float32)
+            assert pose_targets.shape == (12,), (
+                f"joint_targets must be shape (12,), got {pose_targets.shape}"
+            )
+
         n_substeps = max(1, int(round(dt / self.cfg.physics_dt)))
         for substep in range(n_substeps):
-            # Re-query the policy every `decimation` physics substeps.
-            if substep % self.cfg.decimation == 0:
+            if pose_targets is not None:
+                # Keyframe pose control: directly set PD targets, skip policy.
+                for i in range(12):
+                    mj_data.ctrl[self._actuator_ids[i]] = float(pose_targets[i])
+            elif substep % self.cfg.decimation == 0:
+                # Walker policy: build obs, infer action, compute targets.
                 obs = self._build_observation(mj_data, cmd_arr)
                 action = self.policy(obs[None, :])[0]
                 self._last_action = np.asarray(action, dtype=np.float32)
-                # Joint targets = default + scale * action, in MJCF order.
                 targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
                 for i in range(12):
                     mj_data.ctrl[self._actuator_ids[i]] = float(targets[i])
@@ -473,7 +496,6 @@ class PhysicsCat:
         mujoco = self._mujoco
         sid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_SENSOR, name)
         if sid < 0:
-
             if required:
                 raise RuntimeError(f"Sensor {name!r} not in compiled model.")
             return -1

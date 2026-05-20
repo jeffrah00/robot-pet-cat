@@ -1,24 +1,48 @@
-"""crouch — pre-pounce low-and-still pose.
+"""crouch -- pre-pounce low-and-still pose.
 
-Body drops, weight shifts forward, ready to launch. Held until the brain
-switches (usually to a swat or jump_to immediately after). Distinct from sit
-(higher and more relaxed) and lie_down (lower and resting).
+All four legs bend deeper than standing, lowering the center of mass. The
+weight shifts slightly forward (front legs less bent than rear, so the
+front stays lower relative to the haunches). This matches feline crouching
+behavior where the cat compresses before launching.
 
-The cat-behavior signature here is *stillness*: a crouching cat is almost
-motionless, sometimes for many seconds, with only minor head/eye motion. The
-stillness IS the skill.
+The stillness IS the skill: a crouching cat is almost motionless, sometimes
+for many seconds, with only minor head/eye motion.
+
+Joint targets (FL/FR/RL/RR, hip/thigh/calf per leg):
+
+  Front legs: deep bend, weight forward.
+    hip   = +-0.10  (near-default splay)
+    thigh =  1.20   (forward + down, deeper than stand's 0.90)
+    calf  = -2.30   (more bent)
+
+  Rear legs: even deeper, haunches lowered.
+    hip   = +-0.10
+    thigh =  1.45   (rear haunches pulled further under)
+    calf  = -2.55
+
+This emits joint_targets directly; PhysicsCat bypasses the walker policy.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from .skill_policy import LocomotionCommand, Skill
 
 
-# Empirical placeholder. Below standing (0.30), above lying (0.08), and below
-# sit (0.18). Visually distinguishable from sit by being more horizontal.
-CROUCH_BODY_HEIGHT_M = 0.14
+# Joint order: FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf,
+#              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
+CROUCH_JOINT_TARGETS = np.array(
+    [
+        -0.10,  1.20, -2.30,   # FL: deep front bend, weight forward
+        +0.10,  1.20, -2.30,   # FR
+        -0.10,  1.45, -2.55,   # RL: rear haunches lower
+        +0.10,  1.45, -2.55,   # RR
+    ],
+    dtype=np.float32,
+)
 
 
 class Crouch(Skill):
@@ -32,7 +56,8 @@ class Crouch(Skill):
             vy=0.0,
             yaw_rate=0.0,
             gait="stand",
-            body_height=CROUCH_BODY_HEIGHT_M,
+            body_height=0.17,
+            joint_targets=CROUCH_JOINT_TARGETS,
         )
 
     def is_done(self, obs: dict[str, Any], goal: Any) -> bool:

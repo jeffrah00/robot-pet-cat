@@ -1,25 +1,46 @@
-"""sit — static low-haunches pose, held until the brain switches skills.
+"""sit -- static sitting pose, held until the brain switches skills.
 
-Per ROADMAP Phase 3 and 2026-05-19 design conversation: most static-pose skills
-are NOT trained policies. They're keyframe targets executed by PD control on
-the motor cortex. The skill's job is to emit the right LocomotionCommand
-continuously until the brain commands a switch.
+The Go2 approximates a cat sit: front legs remain roughly vertical (upright)
+while the rear legs fold deeply under the haunches, dropping the rear of the
+body toward the floor. This is the closest the Go2's joint configuration can
+get to a feline sitting posture.
 
-The actual posture (haunches tucked, front legs propped, body height ~22 cm)
-will be tuned against MuJoCo visual inspection. The numbers here are starting
-guesses — read them as placeholders, not as final values.
+Joint targets (FL/FR/RL/RR, hip/thigh/calf per leg):
+
+  Front legs (FL=0-2, FR=3-5): semi-upright, thigh slightly forward.
+    hip  = +-0.10  (symmetric, slight abduction)
+    thigh = 0.45   (less forward than stand's 0.90 -- more vertical)
+    calf  = -0.90  (less bent -- straighter front legs)
+
+  Rear legs (RL=6-8, RR=9-11): haunches folded under the body.
+    hip  = +-0.20  (slight outward splay for stability)
+    thigh = 1.55   (deeply forward -- haunches pulled under)
+    calf  = -2.65  (fully bent)
+
+This emits joint_targets directly; PhysicsCat bypasses the walker policy
+and uses PD control to hold the pose.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from .skill_policy import LocomotionCommand, Skill
 
 
-# Empirical placeholders. Tune against MuJoCo render until it visually reads
-# as a sitting cat.
-SIT_BODY_HEIGHT_M = 0.18  # below standing (~0.30) but above lying (~0.08)
+# Joint order: FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf,
+#              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
+SIT_JOINT_TARGETS = np.array(
+    [
+        -0.10,  0.45, -0.90,   # FL: semi-upright front leg
+        +0.10,  0.45, -0.90,   # FR: semi-upright front leg
+        -0.20,  1.55, -2.65,   # RL: haunches folded under
+        +0.20,  1.55, -2.65,   # RR: haunches folded under
+    ],
+    dtype=np.float32,
+)
 
 
 class Sit(Skill):
@@ -33,10 +54,11 @@ class Sit(Skill):
             vy=0.0,
             yaw_rate=0.0,
             gait="stand",
-            body_height=SIT_BODY_HEIGHT_M,
+            body_height=0.22,
+            joint_targets=SIT_JOINT_TARGETS,
         )
 
     def is_done(self, obs: dict[str, Any], goal: Any) -> bool:
-        # Sitting is a hold pose — the brain decides when to exit. Never
+        # Sitting is a hold pose -- the brain decides when to exit. Never
         # spontaneously "done" from the skill's own perspective.
         return False
