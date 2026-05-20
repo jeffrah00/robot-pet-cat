@@ -185,14 +185,24 @@ def main() -> int:
     # Lazy imports so --help doesn't pull mujoco.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-    # Hide GPU from both torch and onnxruntime.
-    # On pods with old NVIDIA drivers (e.g. 12040) onnxruntime grabs the
-    # GPU context first; when SB3 then imports torch and calls
-    # torch._C._cuda_getDeviceCount() it segfaults because the device is
-    # already locked.  Setting CUDA_VISIBLE_DEVICES="" before either library
-    # loads makes both think there is no GPU -- harmless since we already
-    # use device="cpu" for PPO inference and the walker runs fine on CPU too.
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    # --- Load PPO checkpoint BEFORE onnxruntime/BrainEnv ------------------ #
+    # On pods with old NVIDIA drivers onnxruntime grabs the GPU context when
+    # it loads the walker ONNX.  If torch (via SB3) runs after that it
+    # segfaults inside torch._C._cuda_getDeviceCount().  Loading the PPO
+    # weights here -- before BrainEnv is constructed -- avoids that race.
+    ppo_model = None
+    if not args.scripted and Path(args.checkpoint).is_file():
+        try:
+            from stable_baselines3 import PPO
+            _log(f"pre-loading PPO checkpoint {args.checkpoint} (before BrainEnv)...")
+            ppo_model = PPO.load(args.checkpoint, device="cpu")
+            _log(f"  PPO loaded OK ({ppo_model.action_space})")
+        except Exception as e:
+            _log(f"  could not load checkpoint ({type(e).__name__}: {e}); "
+                 "falling back to scripted")
+            ppo_model = None
+    if ppo_model is None:
+        _log("using scripted action stream")
 
     import mujoco
     from PIL import Image  # noqa
@@ -231,25 +241,6 @@ def main() -> int:
 
     obs = env.reset()
     _log(f"reset OK; cat at xy={obs['cat_xy']} yaw={obs['cat_yaw']:.3f}")
-
-    # --- Resolve action driver ----------------------------------------- #
-    ppo_model = None
-    if not args.scripted and Path(args.checkpoint).is_file():
-        try:
-            from stable_baselines3 import PPO
-
-            _log(f"loading PPO checkpoint {args.checkpoint}")
-            # Load on CPU only -- no env= arg so we don't spin up a second
-            # PhysicsCat (which re-loads the ONNX walker and can segfault).
-            # SB3 doesn't need an env for inference-only loading.
-            ppo_model = PPO.load(args.checkpoint, device="cpu")
-            _log("  loaded; using PPO actions")
-        except Exception as e:
-            _log(f"  could not load checkpoint ({type(e).__name__}: {e}); "
-                 "falling back to scripted")
-            ppo_model = None
-    if ppo_model is None:
-        _log("using scripted action stream")
 
     # --- Renderers ----------------------------------------------------- #
     _log(f"creating renderers: main={args.width_main}x{args.height_main}, "
