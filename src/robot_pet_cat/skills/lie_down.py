@@ -29,11 +29,12 @@ from .skill_policy import LocomotionCommand, Skill
 #              RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
 LIE_DOWN_JOINT_TARGETS = np.array(
     [
-        # Unitree StandDown park-pose values. Geometric optimum for Go2.
-        0.0,  1.27, -2.65,   # FL
-        0.0,  1.27, -2.65,   # FR
-        0.0,  1.27, -2.65,   # RL
-        0.0,  1.27, -2.65,   # RR
+        # v4 hip-adduction: pull legs inward. FL/RL=+0.5, FR/RR=-0.5.
+        # thigh+calf from Unitree StandDown.
+        +0.5,  1.27, -2.65,   # FL
+        -0.5,  1.27, -2.65,   # FR
+        +0.5,  1.27, -2.65,   # RL
+        -0.5,  1.27, -2.65,   # RR
     ],
     dtype=np.float32,
 )
