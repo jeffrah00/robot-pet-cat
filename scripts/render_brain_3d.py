@@ -250,7 +250,7 @@ def main() -> int:
     renderer_eye = mujoco.Renderer(env.mj_model, width=args.width_eye, height=args.height_eye)
 
     # Chase camera: track the cat from behind-and-above.
-    base_id = mujoco.mj_name2id(env.mj_model, mujoco.mjtObj.mjOBJ_BODY, "base")
+    base_id = mujoco.mj_name2id(env.mj_model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
     chase = mujoco.MjvCamera()
     chase.type = mujoco.mjtCamera.mjCAMERA_TRACKING
     chase.trackbodyid = base_id
