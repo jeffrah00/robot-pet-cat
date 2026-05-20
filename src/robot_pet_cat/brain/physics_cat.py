@@ -291,6 +291,10 @@ class PhysicsCat:
         self._last_cmd_arr = np.zeros(3, dtype=np.float32)
         self._phase_time = 0.0
         self._refresh_pose_cache(mj_data)
+        # Pose interpolation state (smoothly blend joint targets over 3s)
+        self._jt_interp_start = None   # ctrl values at transition start
+        self._jt_target = None          # current target
+        self._jt_interp_frac = 1.0     # 0=start, 1=arrived
 
     def step(self, mj_data, cmd: LocomotionCommand, dt: float) -> None:
         """Advance physics by `dt`, driving the Go2 via the walker policy.
@@ -305,13 +309,26 @@ class PhysicsCat:
         cmd_arr = self._command_to_twist(cmd)
         self._last_cmd_arr = cmd_arr
 
-        # Resolve joint targets once per step if provided.
-        pose_targets: Optional[np.ndarray] = None
+        # Resolve joint targets once per step if provided, with 3s smoothstep interpolation.
+        pose_targets = None
         if cmd.joint_targets is not None:
-            pose_targets = np.asarray(cmd.joint_targets, dtype=np.float32)
-            assert pose_targets.shape == (12,), (
-                f"joint_targets must be shape (12,), got {pose_targets.shape}"
-            )
+            _new = np.asarray(cmd.joint_targets, dtype=np.float64)
+            assert _new.shape == (12,), f"joint_targets must be shape (12,), got {_new.shape}"
+            if self._jt_target is None or not np.allclose(_new, self._jt_target, atol=1e-4):
+                self._jt_interp_start = np.array(
+                    [mj_data.ctrl[self._actuator_ids[i]] for i in range(12)], dtype=np.float64
+                )
+                self._jt_target = _new.copy()
+                self._jt_interp_frac = 0.0
+            self._jt_interp_frac = min(1.0, self._jt_interp_frac + 1.0 / 60.0)
+            _t = self._jt_interp_frac
+            _ts = _t * _t * (3.0 - 2.0 * _t)  # smoothstep
+            pose_targets = (
+                self._jt_interp_start + _ts * (self._jt_target - self._jt_interp_start)
+            ).astype(np.float32)
+        else:
+            self._jt_target = None
+            self._jt_interp_frac = 1.0
 
         n_substeps = max(1, int(round(dt / self.cfg.physics_dt)))
         for substep in range(n_substeps):
