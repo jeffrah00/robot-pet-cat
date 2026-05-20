@@ -473,4 +473,8 @@ class PhysicsCat:
         mujoco = self._mujoco
         sid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_SENSOR, name)
         if sid < 0:
-          
+
+            if required:
+                raise RuntimeError(f"Sensor {name!r} not in compiled model.")
+            return -1
+        return int(self.mj_model.sensor_adr[sid])
