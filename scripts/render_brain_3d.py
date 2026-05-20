@@ -185,16 +185,14 @@ def main() -> int:
     # Lazy imports so --help doesn't pull mujoco.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-    # Import torch BEFORE onnxruntime (via BrainEnv/PhysicsCat).
-    # On pods with old NVIDIA drivers, torch._C._cuda_getDeviceCount()
-    # segfaults if onnxruntime has already grabbed the GPU context.
-    # Pre-importing torch here forces the CUDA check first; the
-    # UserWarning is harmless, but the ordering prevents the crash.
-    try:
-        import torch as _torch  # noqa: F401
-        _torch.zeros(1)         # trigger CUDA init before onnxruntime
-    except Exception:
-        pass
+    # Hide GPU from both torch and onnxruntime.
+    # On pods with old NVIDIA drivers (e.g. 12040) onnxruntime grabs the
+    # GPU context first; when SB3 then imports torch and calls
+    # torch._C._cuda_getDeviceCount() it segfaults because the device is
+    # already locked.  Setting CUDA_VISIBLE_DEVICES="" before either library
+    # loads makes both think there is no GPU -- harmless since we already
+    # use device="cpu" for PPO inference and the walker runs fine on CPU too.
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     import mujoco
     from PIL import Image  # noqa
