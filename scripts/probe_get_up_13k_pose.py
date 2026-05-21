@@ -22,6 +22,8 @@ import sys
 import torch
 
 sys.path.insert(0, '/workspace/unitree_rl_mjlab')
+# Trigger task registration via import_packages side-effect.
+import src.tasks  # noqa: F401
 
 from dataclasses import asdict
 
@@ -87,11 +89,4 @@ def main() -> int:
     median_rz = statistics.median(p[1][2] for p in all_poses)
     print()
     print(f"SIT_HIND_POSE_PROBE median_joint_pos = {median_jp}")
-    print(f"SIT_HIND_POSE_PROBE median_root_z    = {median_rz:.4f}")
-
-    env.close()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    print(f"SIT_HIND_POSE_PROBE median_root_z    = {media
