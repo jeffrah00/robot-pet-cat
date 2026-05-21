@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Probe the get_up 13k checkpoint to extract its terminal sit-pose joint angles.
+
+Jeff observed that the v4b-trained get_up policy at iter 13000 reliably settles
+into a stable "hind-legs-on-ground" sit. We want those exact joint angles to use
+as the starting pose for a new `sit_hind` (Unitree-Go2-Sit-Hind) task scaffold.
+
+This script mirrors play.py's env+policy construction, then runs a headless
+rollout for N steps and prints the final joint_pos + root state.
+
+Usage on pod:
+    cd /workspace/unitree_rl_mjlab && source /workspace/mjlab_venv/bin/activate
+    python3 /workspace/robot-pet-cat/scripts/probe_get_up_13k_pose.py \\
+        > /tmp/sit_hind_probe.log 2>&1
+
+The interesting lines start with `SIT_HIND_POSE_PROBE`.
+"""
+
+from __future__ import annotations
+import os
+import sys
+import torch
+
+sys.path.insert(0, '/workspace/unitree_rl_mjlab')
+
+from dataclasses import asdict
+
+from mjlab.envs import ManagerBasedRlEnv
+from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+from mjlab.utils.torch import configure_torch_backends
+
+CKPT = "/workspace/unitree_rl_mjlab/logs/rsl_rl/go2_velocity/2026-05-21_21-38-34/model_13000.pt"
+TASK = "Unitree-Go2-GetUp"
+# 300 steps @ 50 Hz control = 6 s of real time. Plenty for the policy to settle
+# into its terminal sit pose from any initial fallen condition.
+N_STEPS = 300
+
+# Probe multiple distinct seeds so we capture the modal pose (the policy may
+# settle slightly differently from different initial fallen poses).
+N_PROBES = 3
+
+
+def main() -> int:
+    configure_torch_backends()
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    env_cfg = load_env_cfg(TASK, play=True)
+    agent_cfg = load_rl_cfg(TASK)
+
+    env = ManagerBasedRlEnv(cfg=env_cfg, device=device, render_mode=None)
+    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+
+    runner_cls = load_runner_cls(TASK) or MjlabOnPolicyRunner
+    runner = runner_cls(env, asdict(agent_cfg), device=device)
+    runner.load(CKPT, load_cfg={"actor": True}, strict=True, map_location=device)
+    policy = runner.get_inference_policy(device=device)
+
+    obs, _ = env.get_observations()
+    robot = env.unwrapped.scene["robot"]
+
+    all_poses = []
+    for probe in range(N_PROBES):
+        # Re-reset and burn through N_STEPS steps so each probe samples a fresh
+        # initial pose and lets the policy settle.
+        env.reset()
+        obs, _ = env.get_observations()
+        for step in range(N_STEPS):
+            with torch.no_grad():
+                actions = policy(obs)
+            obs, _, _, _ = env.step(actions)
+
+        jp = robot.data.joint_pos[0].cpu().numpy().tolist()
+        rp = robot.data.root_link_pos_w[0].cpu().numpy().tolist()
+        rq = robot.data.root_link_quat_w[0].cpu().numpy().tolist()
+        pg = robot.data.projected_gravity_b[0].cpu().numpy().tolist()
+        all_poses.append((jp, rp, rq, pg))
+        print(f"SIT_HIND_POSE_PROBE probe={probe} joint_pos={jp}")
+        print(f"SIT_HIND_POSE_PROBE probe={probe} root_xyz={rp}")
+        print(f"SIT_HIND_POSE_PROBE probe={probe} root_quat={rq}")
+        print(f"SIT_HIND_POSE_PROBE probe={probe} proj_grav={pg}")
+        print(f"SIT_HIND_POSE_PROBE probe={probe} root_z={rp[2]:.3f}")
+
+    # Median across probes (robust to one bad rollout).
+    import statistics
+    median_jp = [statistics.median(p[0][i] for p in all_poses) for i in range(12)]
+    median_rz = statistics.median(p[1][2] for p in all_poses)
+    print()
+    print(f"SIT_HIND_POSE_PROBE median_joint_pos = {median_jp}")
+    print(f"SIT_HIND_POSE_PROBE median_root_z    = {median_rz:.4f}")
+
+    env.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
