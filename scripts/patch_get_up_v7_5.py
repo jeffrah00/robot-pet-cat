@@ -2,25 +2,21 @@
 """
 get_up v7.5 -- FR-Net (paper-faithful gated postural reward).
 
-The arXiv 2509.11504 (FR-Net) paper's Eq. 8 orientation reward is:
-
+FR-Net paper (arXiv 2509.11504) Eq. 8 orientation reward:
   R_orient = w1*g_xy^2 + w2*exp(-(g_z+1)^2/(2 eps^2))
              + w3*exp(-|q-q_stand|^2) * 1{|g_z+1| < eps}
 
-The crucial detail: the postural-convergence term exp(-|q-q_stand|^2) is
-GATED by 1{|g_z+1| < eps}, meaning it only activates once the base is
-already nearly upright. v7's `hind_legs_extended` reward (and any similar
-joint-target reward) fires throughout, so the policy can satisfy "hocks at
-target angle" while still on its side -- producing the dog-sit / play-bow
-failure mode we've observed.
+The third term (postural-convergence to standing joint angles) is GATED by
+the indicator that the base is nearly upright. v7's hind_legs_extended is
+ungated -- fires while the cat is still tilted -- letting the policy
+satisfy the joint target in a dog-sit pose without actually standing.
 
-Changes vs v7:
-  * Add hind_legs_extended_gated = original * (g_z < -0.95)
-    (gate threshold roughly matches the paper's |g_z+1| < eps with eps ~0.05)
-  * Swap env_cfg reward function reference from .hind_legs_extended to
-    .hind_legs_extended_gated
-  * Boost stand_fully_bonus 15 -> 30 (carries v7.2's idea)
-  * Relax fell_over 70 -> 100 deg (carries v7.2's idea)
+Changes vs v7 (rev 3, post-v7.2 lessons):
+  * Swap hind_legs_extended -> hind_legs_extended_gated (new func, multiplies
+    by indicator that projected_gravity_b z is near -1, i.e. base upright)
+  * Boost stand_fully_bonus 15 -> 30 (stronger pull toward the stand goal)
+  * KEEP fell_over termination at 70 deg -- v7.2's 100-deg relaxation let
+    the policy reward-hack by staying prone for full-length episodes.
 """
 
 from __future__ import annotations
@@ -58,26 +54,22 @@ def apply() -> int:
         "stand_fully_bonus 15 -> 30",
     )
     must_replace(
-        "math.radians(70.0)",
-        "math.radians(100.0)",
-        "fell_over 70deg -> 100deg",
-    )
-    must_replace(
         "func=get_up_mdp.hind_legs_extended,",
         "func=get_up_mdp.hind_legs_extended_gated,",
         "hind_legs_extended -> hind_legs_extended_gated",
     )
+    # NB: deliberately NOT relaxing fell_over -- v7.2 showed that lets the
+    # policy stay prone for full episodes and reward-hack.
 
     cfg_path.write_text(txt)
 
-    # Append the gated reward function.
     extra = '\n\n# === v7.5 ============================================================\n'
     extra += 'def hind_legs_extended_gated(env, asset_cfg=_DEFAULT_ASSET_CFG):\n'
-    extra += '    """Postural-convergence reward, gated on near-upright base.\n\n'
-    extra += '    Per FR-Net paper Eq. 8: the postural target exp(-|q-q_stand|^2)\n'
-    extra += '    is multiplied by 1{|g_z+1| < eps}. This prevents the policy from\n'
-    extra += '    satisfying the joint-angle target while still tilted, which would\n'
-    extra += '    otherwise lock in the dog-sit / play-bow failure mode.\n'
+    extra += '    """Postural-convergence reward gated on near-upright base.\n\n'
+    extra += '    Per FR-Net paper Eq. 8: postural target exp(-|q-q_stand|^2) is\n'
+    extra += '    multiplied by 1{|g_z+1| < eps}. Prevents the policy from satisfying\n'
+    extra += '    the joint-angle target while still tilted -- which would otherwise\n'
+    extra += '    lock in the dog-sit / play-bow failure mode observed in v7-v7.3.\n'
     extra += '    """\n'
     extra += '    asset = env.scene[asset_cfg.name]\n'
     extra += '    jp = asset.data.joint_pos\n'
@@ -86,7 +78,8 @@ def apply() -> int:
     extra += '        err = err + (jp[:, idx] - target) ** 2\n'
     extra += '    raw = torch.exp(-err)\n'
     extra += '    # Gate: only reward postural match once base is nearly upright.\n'
-    extra += '    # projected_gravity_b[:, 2] is approx -1 when upright, +1 when belly-up.\n'
+    extra += '    # projected_gravity_b[:, 2] is approx -1 when upright (gravity in\n'
+    extra += '    # body frame points down), +1 when belly-up.\n'
     extra += '    gz = asset.data.projected_gravity_b[:, 2]\n'
     extra += '    near_upright = (gz < -0.95).float()\n'
     extra += '    return raw * near_upright\n'
