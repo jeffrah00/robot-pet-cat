@@ -9,13 +9,10 @@ Skill IDs are stable strings so the brain's categorical head can be saved and
 reloaded without an integer-mapping drift bug. Order in `SKILLS` is also stable
 so `SKILL_INDEX[name]` produces a fixed integer for the policy head.
 
-Skills are stateful (Stretch carries a phase timer); the registry returns the
-SAME instance across calls so state is preserved across decision ticks.
-Callers should invoke `skill.reset()` (if defined) when the brain transitions
-INTO that skill from a different one.
-
-NOTE: swat was removed 2026-05-20. The action space is now Discrete(8)
-(HOLD + 7 skills). Brain checkpoints trained with swat (v4/v5) need retraining.
+Skills are stateful (Stretch and Swat carry a phase timer); the registry
+returns the SAME instance across calls so state is preserved across decision
+ticks. Callers should invoke `skill.reset()` (if defined) when the brain
+transitions INTO that skill from a different one.
 """
 
 from __future__ import annotations
@@ -23,18 +20,24 @@ from __future__ import annotations
 from typing import Any
 
 from .crouch import Crouch
+from .hind_sit import HindSit
 from .lie_down import LieDown
 from .look_at import LookAt
 from .sit import Sit
 from .skill_policy import Skill
 from .stretch import Stretch
+from .swat import Swat
 from .walk_to import WalkTo
+
+# jump_to is included for the brain's categorical head but raises
+# NotImplementedError at step time until a trained policy is loaded.
 from .jump_to import JumpTo
-from .get_up import GetUp
 
 
 def _build_skills() -> dict[str, Skill]:
-    """Instantiate the canonical skill set."""
+    """Instantiate the canonical skill set. Stateful skills get exactly one
+    instance shared across decision ticks; the brain is responsible for
+    `.reset()` on transitions."""
     return {
         "walk_to": WalkTo(),
         "sit": Sit(),
@@ -42,14 +45,14 @@ def _build_skills() -> dict[str, Skill]:
         "stretch": Stretch(),
         "crouch": Crouch(),
         "look_at": LookAt(),
+        "swat": Swat(),
         "jump_to": JumpTo(),
-        "get_up": GetUp(),
+        "hind_sit": HindSit(),
     }
 
 
-# Stable insertion order -- DON'T reorder; brain checkpoints encode integer
-# indices that map back through SKILL_NAMES.
-# swat removed 2026-05-20: Discrete(9) -> Discrete(8). Needs brain retrain.
+# Stable insertion order — DON'T reorder; brain checkpoints encode integer
+# indices that map back through SKILL_NAMES. New skills append to the end.
 SKILL_NAMES: tuple[str, ...] = (
     "walk_to",
     "sit",
@@ -57,8 +60,9 @@ SKILL_NAMES: tuple[str, ...] = (
     "stretch",
     "crouch",
     "look_at",
+    "swat",
     "jump_to",
-    "get_up",
+    "hind_sit",
 )
 
 SKILL_INDEX: dict[str, int] = {name: i for i, name in enumerate(SKILL_NAMES)}
@@ -110,12 +114,15 @@ class SkillRegistry:
         return SKILL_INDEX[name]
 
     def reset(self, name: str) -> None:
+        """Reset a skill's internal state. Called by the brain when transitioning
+        INTO this skill from a different one. No-op if the skill has no reset()."""
         skill = self.get(name)
         reset = getattr(skill, "reset", None)
         if callable(reset):
             reset()
 
     def step(self, name: str, obs: dict[str, Any], goal: Any):
+        """Convenience: dispatch a step call by skill name."""
         return self.get(name).step(obs, goal)
 
     def is_done(self, name: str, obs: dict[str, Any], goal: Any) -> bool:

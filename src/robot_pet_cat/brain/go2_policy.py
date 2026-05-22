@@ -1,4 +1,4 @@
-"""Loader for the unitree_rl_mjlab Go2 velocity walker policy.
+"""Loader for the unitree_rl_mjlab Go2 velocity walker policy + hind_sit policy.
 
 The walker on the pod is trained by unitree_rl_mjlab (RSL-RL backend) against
 the Go2 velocity task. Each training save writes both:
@@ -6,43 +6,27 @@ the Go2 velocity task. Each training save writes both:
   - logs/.../model_<iter>.pt   -- RSL-RL OnPolicyRunner checkpoint
   - logs/.../policy.onnx       -- exported ONNX (obs-normalizer baked in)
 
-ONNX is the preferred path for external integration because:
-  1. The empirical-mean/std observation normalizer is embedded inside the
-     ONNX graph -- no rsl_rl dependency required at load time.
-  2. The whole pipeline runs in onnxruntime, which is much lighter than
-     a torch+rsl_rl stack and works on CPU at ~50 Hz for a single robot.
+ONNX is the preferred path for external integration. The .pt path is the
+fallback when only the runner checkpoint is on disk. It requires rsl_rl
+to be installed and rebuilds the actor MLP + normalizer manually before
+loading weights.
 
-The .pt path is the fallback when only the runner checkpoint is on disk.
-It requires rsl_rl to be installed and rebuilds the actor MLP + normalizer
-manually before loading weights.
+Walker policy contract (47 dims, flat env):
+    base_ang_vel(3) + projected_gravity(3) + command(3) + phase(2)
+        + joint_pos(12) + joint_vel(12) + last_action(12)
 
-Policy contract (matches velocity_env_cfg.py + unitree_go2_flat_env_cfg):
+Hind_sit policy contract (42 dims, from the get_up task):
+    base_ang_vel(3) + projected_gravity(3) + joint_pos(12) + joint_vel(12)
+        + last_action(12)
+The hind_sit policy was the get_up v4b checkpoint at model_13000.pt and is
+packaged at models/hind_sit_v1.pt. The actor MLP shape is the same as the
+walker (512, 256, 128) -- only the input dim differs.
 
-  Observation (47 dims for flat env, in this order):
-    base_ang_vel        (3)   rad/s, body frame, from gyro
-    projected_gravity   (3)   unit gravity in body frame
-    command             (3)   [vx, vy, yaw_rate]
-    phase               (2)   [sin(2*pi*t/0.6), cos(2*pi*t/0.6)],
-                              zeroed when ||command|| < 0.1
-    joint_pos           (12)  q - q_default
-    joint_vel           (12)  dq
-    last_action         (12)  previous raw policy output
-
-  The rough-terrain variant additionally has a `height_scan` term
-  (160 dims for the default 1.6x1.0m / 0.1 resolution grid). We do
-  not include it here: the Tier 3 brain runs on a flat living-room
-  floor, so the scan is degenerate. If model_6400.pt was trained on
-  rough terrain, pass `obs_extra_zero_dims=160` to PhysicsCat to pad
-  the observation with zeros.
-
-  Action (12 dims):
-    raw output a. Joint target = q_default + 0.25 * a.
-
-Joint order (MJCF order in menagerie's go2_mjx.xml):
-    FR_hip, FR_thigh, FR_calf,
+Joint order (MJCF):
     FL_hip, FL_thigh, FL_calf,
-    RR_hip, RR_thigh, RR_calf,
-    RL_hip, RL_thigh, RL_calf
+    FR_hip, FR_thigh, FR_calf,
+    RL_hip, RL_thigh, RL_calf,
+    RR_hip, RR_thigh, RR_calf
 """
 
 from __future__ import annotations
@@ -54,10 +38,7 @@ from typing import Optional, Protocol
 import numpy as np
 
 
-# Default joint positions, MJCF order = FL, FR, RL, RR (verified by
-# mj_id2name against the compiled scene). This matches the order
-# menagerie's go2_mjx.xml emits actuators/joints in, which is also
-# the order mjlab trains the policy against.
+# Default joint positions in MJCF compile order (FL, FR, RL, RR).
 GO2_DEFAULT_JOINT_POS = np.array(
     [
         -0.10, 0.90, -1.80,   # FL
@@ -68,7 +49,6 @@ GO2_DEFAULT_JOINT_POS = np.array(
     dtype=np.float32,
 )
 
-# Joint name order, FL/FR/RL/RR (matches MJCF compile order).
 GO2_JOINT_NAMES = [
     "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
     "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
@@ -76,33 +56,28 @@ GO2_JOINT_NAMES = [
     "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
 ]
 
-# Per the env config: action delta is scaled by 0.25 before adding to default.
 GO2_ACTION_SCALE = 0.25
-
-# Physics dt and decimation expected by the walker.
 GO2_PHYSICS_DT = 0.005
 GO2_POLICY_DECIMATION = 4
 GO2_POLICY_DT = GO2_PHYSICS_DT * GO2_POLICY_DECIMATION  # 0.02 s, 50 Hz
-
-# Phase period (sec) -- gait phase wraps every 0.6 s of "moving" command.
 GO2_PHASE_PERIOD = 0.6
-# Phase is zeroed when command magnitude below this threshold.
 GO2_PHASE_STAND_THRESHOLD = 0.1
 
 
 class WalkerPolicy(Protocol):
-    """Callable that maps obs [N,48] -> action [N,12]."""
+    """Callable that maps obs[N,*] -> action[N,12]. Obs dim depends on which
+    policy: 47 for the walker, 42 for hind_sit."""
 
     def __call__(self, obs: np.ndarray) -> np.ndarray: ...
 
 
 # --------------------------------------------------------------------------- #
-# ONNX path -- preferred
+# ONNX path -- preferred when available
 # --------------------------------------------------------------------------- #
 
 
 class _OnnxWalkerPolicy:
-    """Wraps onnxruntime InferenceSession around the Go2 walker export."""
+    """Wraps onnxruntime InferenceSession around any Go2 policy export."""
 
     def __init__(self, onnx_path: Path, providers: Optional[list[str]] = None):
         import onnxruntime as ort
@@ -115,8 +90,6 @@ class _OnnxWalkerPolicy:
             sess_options=sess_options,
             providers=providers or ["CPUExecutionProvider"],
         )
-        # Resolve I/O names. The export usually names the input "obs"
-        # (or "input") and produces one output; be defensive about both.
         self._input_name = self._session.get_inputs()[0].name
         self._output_name = self._session.get_outputs()[0].name
         self._input_shape = tuple(self._session.get_inputs()[0].shape)
@@ -133,12 +106,14 @@ class _OnnxWalkerPolicy:
 
 
 # --------------------------------------------------------------------------- #
-# .pt path -- requires rsl_rl
+# .pt path -- requires rsl_rl style checkpoints
 # --------------------------------------------------------------------------- #
 
 
 @dataclass
 class TorchWalkerConfig:
+    """Generic config for a torch-loaded rsl_rl actor. Use obs_dim=47 for
+    the walker, obs_dim=42 for hind_sit. Same hidden dims either way."""
     obs_dim: int = 47
     action_dim: int = 12
     hidden_dims: tuple = (512, 256, 128)
@@ -149,24 +124,10 @@ class TorchWalkerConfig:
 class _TorchWalkerPolicy:
     """Rebuilds the RSL-RL actor + EmpiricalNormalization and loads weights.
 
-    The model_<iter>.pt file from rsl_rl OnPolicyRunner.save has the shape:
-        {
-          "model_state_dict": {
-              "obs_normalizer.running_mean": ...,
-              "obs_normalizer.running_var": ...,
-              "obs_normalizer.count": ...,
-              "actor.0.weight": ..., "actor.0.bias": ...,
-              "actor.2.weight": ..., ...,
-              "actor.<last>.weight": ..., "actor.<last>.bias": ...,
-              ...critic, std...
-          },
-          "optimizer_state_dict": ...,
-          "iter": ...,
-          "infos": ...,
-        }
-
-    The actor module in rsl_rl 2.x is an `nn.Sequential` so the keys are
-    "actor.0", "actor.2", "actor.4", "actor.6" for our four Linear layers.
+    Keys in model_<iter>.pt look like:
+        actor.0.weight, actor.0.bias, actor.2.weight, actor.2.bias, ...
+        obs_normalizer.running_mean, obs_normalizer.running_var,
+            obs_normalizer.count
     """
 
     def __init__(self, ckpt_path: Path, cfg: Optional[TorchWalkerConfig] = None):
@@ -177,7 +138,6 @@ class _TorchWalkerPolicy:
         self.cfg = cfg or TorchWalkerConfig()
         self.device = torch.device(self.cfg.device)
 
-        # Build MLP: Linear-ELU-Linear-ELU-Linear-ELU-Linear (no output activation).
         act = {"elu": nn.ELU, "relu": nn.ReLU, "tanh": nn.Tanh}[self.cfg.activation]
         dims = [self.cfg.obs_dim, *self.cfg.hidden_dims, self.cfg.action_dim]
         layers: list[nn.Module] = []
@@ -187,14 +147,11 @@ class _TorchWalkerPolicy:
                 layers.append(act())
         self.actor = nn.Sequential(*layers).to(self.device).eval()
 
-        # Build empirical normalizer (running mean / var / count).
         self.normalizer_mean = torch.zeros(self.cfg.obs_dim, device=self.device)
         self.normalizer_var = torch.ones(self.cfg.obs_dim, device=self.device)
         self._has_normalizer = False
 
         self._load_checkpoint(ckpt_path)
-
-    # ------------------------------------------------------------------ #
 
     def _load_checkpoint(self, ckpt_path: Path) -> None:
         torch = self._torch
@@ -203,59 +160,37 @@ class _TorchWalkerPolicy:
         sd = blob.get("model_state_dict") or blob.get("state_dict") or blob
         if not isinstance(sd, dict):
             raise RuntimeError(
-                f"Unrecognized checkpoint shape: {type(sd).__name__}. "
-                f"Top-level keys: {list(blob.keys()) if isinstance(blob, dict) else 'n/a'}"
+                "Unrecognized checkpoint shape: " + type(sd).__name__
             )
 
-        # Pull out actor and obs_normalizer weights. Strip rsl_rl prefixes.
         actor_weights: dict = {}
-        # unitree_rl_mjlab format: actor stored under actor_state_dict with mlp.* keys
-        if "actor_state_dict" in blob:
-            asd = blob["actor_state_dict"]
-            for k, v in asd.items():
-                if k.startswith("mlp."):
-                    actor_weights[k[len("mlp."):]] = v
-                elif k.startswith("obs_normalizer."):
-                    tail = k.split(".", 1)[1]  # e.g. "_mean", "_var", "_std"
-                    if tail in ("_mean", "running_mean", "mean"):
-                        self.normalizer_mean = v.to(self.device)
-                        self._has_normalizer = True
-                    elif tail in ("_var", "running_var", "var", "_var"):
-                        self.normalizer_var = v.to(self.device)
-                        self._has_normalizer = True
-        else:
-            for k, v in sd.items():
-                # rsl_rl 2.x: keys look like "actor.0.weight", "actor.2.weight", ...
-                if k.startswith("actor."):
-                    actor_weights[k[len("actor."):]] = v
-                elif k.startswith("policy.actor."):
-                    actor_weights[k[len("policy.actor."):]] = v
-                elif k.startswith("obs_normalizer.") or k.startswith("normalizer."):
-                    tail = k.split(".", 1)[1]
-                    if tail in ("running_mean", "mean"):
-                        self.normalizer_mean = v.to(self.device)
-                        self._has_normalizer = True
-                    elif tail in ("running_var", "var"):
-                        self.normalizer_var = v.to(self.device)
-                        self._has_normalizer = True
+        for k, v in sd.items():
+            if k.startswith("actor."):
+                actor_weights[k[len("actor."):]] = v
+            elif k.startswith("policy.actor."):
+                actor_weights[k[len("policy.actor."):]] = v
+            elif k.startswith("obs_normalizer.") or k.startswith("normalizer."):
+                tail = k.split(".", 1)[1]
+                if tail in ("running_mean", "mean"):
+                    self.normalizer_mean = v.to(self.device)
+                    self._has_normalizer = True
+                elif tail in ("running_var", "var"):
+                    self.normalizer_var = v.to(self.device)
+                    self._has_normalizer = True
 
         if not actor_weights:
             raise RuntimeError(
                 "No actor weights found. Keys in state_dict: "
-                f"{list(sd.keys())[:20]} (truncated)"
+                + str(list(sd.keys())[:20])
             )
 
-        missing, unexpected = self.actor.load_state_dict(actor_weights, strict=False)
-        # Filter to real misses (ignore stds, etc. that aren't actor params).
+        missing, _ = self.actor.load_state_dict(actor_weights, strict=False)
         actor_param_keys = set(self.actor.state_dict().keys())
         real_missing = [k for k in missing if k in actor_param_keys]
         if real_missing:
             raise RuntimeError(
-                f"Actor checkpoint missing {len(real_missing)} keys, e.g. "
-                f"{real_missing[:5]}. Architecture mismatch?"
+                "Actor checkpoint missing keys: " + str(real_missing[:5])
             )
-
-    # ------------------------------------------------------------------ #
 
     def __call__(self, obs: np.ndarray) -> np.ndarray:
         torch = self._torch
@@ -265,31 +200,42 @@ class _TorchWalkerPolicy:
         with torch.no_grad():
             x = torch.from_numpy(obs_arr).to(self.device)
             if self._has_normalizer:
-                # x_hat = (x - mean) / sqrt(var + eps)
                 x = (x - self.normalizer_mean) / torch.sqrt(self.normalizer_var + 1e-8)
             out = self.actor(x)
         return out.detach().cpu().numpy().astype(np.float32)
 
 
 # --------------------------------------------------------------------------- #
-# Public loader
+# Public loaders
 # --------------------------------------------------------------------------- #
 
 
 def load_go2_walker_policy(
-    policy_path: str | Path,
+    policy_path: "str | Path",
     device: str = "cpu",
 ) -> WalkerPolicy:
-    """Load a Go2 velocity walker. Path can be .onnx or .pt.
+    """Load the Go2 velocity walker (47-dim obs). Accepts .onnx, .pt, .pth,
+    or a directory containing policy.onnx / model_*.pt."""
+    return _load_policy(policy_path, obs_dim=47, device=device)
 
-    Selection rules:
-      - .onnx extension       -> onnxruntime path (preferred).
-      - .pt / .pth extension  -> torch + rsl_rl style path.
-      - directory             -> look for policy.onnx, else model_*.pt
-                                 (highest iteration number).
 
-    Returns a callable of shape obs[N,48] -> action[N,12].
+def load_hind_sit_policy(
+    policy_path: "str | Path" = "/workspace/robot-pet-cat/models/hind_sit_v1.pt",
+    device: str = "cpu",
+) -> WalkerPolicy:
+    """Load the hind_sit policy (42-dim obs, no command/phase channels).
+
+    Defaults to models/hind_sit_v1.pt (the get_up v4b @ iter 13000 checkpoint).
+    Same actor architecture as the walker; only obs_dim differs.
     """
+    return _load_policy(policy_path, obs_dim=42, device=device)
+
+
+def _load_policy(
+    policy_path: "str | Path",
+    obs_dim: int,
+    device: str,
+) -> WalkerPolicy:
     path = Path(policy_path)
     if path.is_dir():
         onnx_candidate = path / "policy.onnx"
@@ -303,7 +249,7 @@ def load_go2_walker_policy(
             )
             if not pts:
                 raise FileNotFoundError(
-                    f"No policy.onnx or model_*.pt found under {path}"
+                    "No policy.onnx or model_*.pt found under " + str(path)
                 )
             path = pts[0]
 
@@ -314,10 +260,10 @@ def load_go2_walker_policy(
     if suffix == ".onnx":
         return _OnnxWalkerPolicy(path)
     if suffix in (".pt", ".pth"):
-        return _TorchWalkerPolicy(path, TorchWalkerConfig(device=device))
+        return _TorchWalkerPolicy(path, TorchWalkerConfig(obs_dim=obs_dim, device=device))
     raise ValueError(
-        f"Unrecognized walker policy extension {suffix!r}; "
-        "expected .onnx, .pt, or .pth"
+        "Unrecognized policy extension " + repr(suffix)
+        + "; expected .onnx, .pt, or .pth"
     )
 
 

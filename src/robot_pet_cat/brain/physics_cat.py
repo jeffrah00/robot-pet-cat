@@ -11,23 +11,16 @@ underneath it actually drives the Go2 in MuJoCo:
          walker dt 0.005 s.
       2. Every `decimation` (4) physics steps, builds the 48-dim observation
          and calls the walker policy to get the next 12-d action.
-         UNLESS cmd.joint_targets is set, in which case those are written
-         directly to ctrl (PD pose control, walker policy bypassed).
-      3. Writes joint position targets into mj_data.ctrl.
+      3. Writes joint position targets (default + 0.25*action) into mj_data.ctrl.
       4. Calls mujoco.mj_step.
       5. After all substeps, refreshes cached pose properties.
 
 LocomotionCommand mapping:
     cmd.vx / cmd.vy / cmd.yaw_rate go directly into the policy's
     `command` channel. cmd.gait == "stand" forces the command to zero
-    so the policy enters its stand-mask branch. cmd.body_height and cmd.head_*
+    so the policy enters its stand pose. cmd.body_height and cmd.head_*
     aren't part of the velocity walker's obs and are ignored at Tier 1
     (Tier 2 keyframes or a later head policy will handle them).
-
-    cmd.joint_targets (new): when not None, a 12-element array of absolute
-    joint positions (FL/FR/RL/RR x hip/thigh/calf). The walker policy is
-    skipped entirely and these targets drive the PD actuators directly. Use
-    for static keyframe poses: sit, lie_down, crouch, stretch.
 
 Reset:
     qpos for the base free joint = [x, y, z_spawn, quat_from_yaw(yaw)]
@@ -56,6 +49,7 @@ from .go2_policy import (
     GO2_POLICY_DECIMATION,
     WalkerPolicy,
     load_go2_walker_policy,
+    load_hind_sit_policy,
 )
 
 
@@ -63,14 +57,7 @@ from .go2_policy import (
 DEFAULT_BASE_SPAWN_Z = 0.32
 
 # Name of the Go2 base body in menagerie's go2_mjx.xml.
-GO2_BASE_BODY = "base_link"
-
-# Software PD gains matching unitree_rl_mjlab training config (FL,FR,RL,RR x hip,thigh,calf).
-import numpy as _np_pd
-_KP     = _np_pd.array([20,20,40, 20,20,40, 20,20,40, 20,20,40], dtype=_np_pd.float64)
-_KD     = _np_pd.array([1, 1, 2,  1, 1, 2,  1, 1, 2,  1, 1, 2 ], dtype=_np_pd.float64)
-_EFFORT = _np_pd.array([23.5,23.5,45, 23.5,23.5,45, 23.5,23.5,45, 23.5,23.5,45], dtype=_np_pd.float64)
-
+GO2_BASE_BODY = "base"
 
 
 def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
@@ -88,8 +75,8 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
     """
     import re
 
-    KEY = next((k for k in ("go2.xml", "go2_mjx.xml") if k in assets), None)
-    if KEY is None:
+    KEY = "go2_mjx.xml"
+    if KEY not in assets:
         return assets
     text = assets[KEY].decode("utf-8")
     if "cat_eye" in text:
@@ -105,7 +92,7 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
         'type="sphere" group="2" rgba="1 0.5 0.5 0.6"/>'
     )
     new_text, n = re.subn(
-        r'(<body name="(?:base|base_link)"[^>]*>)',
+        r'(<body name="base"[^>]*>)',
         r'\1' + cam_block,
         text,
         count=1,
@@ -116,17 +103,6 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
             "inject cat_eye camera."
         )
     assets[KEY] = new_text.encode("utf-8")
-
-    #  Physics transplant from unitree_mujoco 
-    # Patch joint defaults: damping 2->0.1, add frictionloss=0.2, kd 0.5->3.5
-    text2 = assets[KEY].decode("utf-8")
-    # joint damping 2 -> 0.1
-    text2 = text2.replace('damping="2"', 'damping="0.1"')
-    # add frictionloss=0.2 after armature=0.01 on the default joint line
-    text2 = text2.replace('armature="0.01"/>', 'armature="0.01" frictionloss="0.2"/>')
-    # kd 0.5 -> 3.5 in biasprm
-    text2 = text2.replace('biasprm="0 -50 -0.5"', 'biasprm="0 -50 -3.5"')
-    assets[KEY] = text2.encode("utf-8")
     return assets
 
 
@@ -159,6 +135,7 @@ class PhysicsCat:
         mj_model,
         policy: WalkerPolicy | str | Path,
         cfg: Optional[PhysicsCatConfig] = None,
+        hind_sit_policy: "WalkerPolicy | str | Path | None" = None,
     ) -> None:
         import mujoco
 
@@ -172,6 +149,17 @@ class PhysicsCat:
             self.policy: WalkerPolicy = policy
         else:
             self.policy = load_go2_walker_policy(policy)
+
+        # Optional hind_sit policy: dispatched when a skill emits
+        # gait="hind_sit". Same actuator pipeline as the walker (action *
+        # 0.25 + default joint pos), but with a 42-dim obs that lacks the
+        # walker's command + phase channels.
+        if hind_sit_policy is None:
+            self.hind_sit_policy = None
+        elif callable(hind_sit_policy):
+            self.hind_sit_policy = hind_sit_policy
+        else:
+            self.hind_sit_policy = load_hind_sit_policy(hind_sit_policy)
 
         # ---- Index lookups against the compiled MuJoCo model ----------- #
         # Base body and its free-joint qpos/qvel offsets.
@@ -240,10 +228,10 @@ class PhysicsCat:
         self._last_speed = 0.0
         # Last command issued (for the policy's `command` channel).
         self._last_cmd_arr = np.zeros(3, dtype=np.float32)
-        # Pose ramp state (for tanh interpolation in joint_targets bypass).
-        self._pose_ramp_step = 0
-        self._pose_start_pos = np.zeros(12, dtype=np.float32)
-        self._last_pose_key: bytes | None = None
+        # Track which policy was last active so we can zero last_action when
+        # switching between walker and hind_sit (the two policies have
+        # different action distributions; a stale last_action is OOD).
+        self._last_active_policy = "walker"
 
     # ------------------------------------------------------------------ #
     # KinematicCat-compatible properties
@@ -302,73 +290,61 @@ class PhysicsCat:
             qpos[self._joint_qpos_adr[i]] = float(GO2_DEFAULT_JOINT_POS[i])
             qvel[self._joint_qvel_adr[i]] = 0.0
 
-        # Clear ctrl (motor actuators: start with zero torque).
+        # Clear ctrl too (otherwise stale targets from last episode survive).
         mj_data.ctrl[:] = 0.0
+        for i in range(12):
+            mj_data.ctrl[self._actuator_ids[i]] = float(GO2_DEFAULT_JOINT_POS[i])
 
         mujoco.mj_forward(self.mj_model, mj_data)
 
         self._last_action = np.zeros(12, dtype=np.float32)
         self._last_cmd_arr = np.zeros(3, dtype=np.float32)
         self._phase_time = 0.0
-        self._pose_ramp_step = 0
-        self._last_pose_key = None
         self._refresh_pose_cache(mj_data)
 
     def step(self, mj_data, cmd: LocomotionCommand, dt: float) -> None:
-        """Advance physics by `dt`, driving the Go2 via the walker policy.
+        """Advance physics by `dt`, driving the Go2 via the appropriate policy.
 
-        If cmd.joint_targets is not None, the walker policy is bypassed and
-        the given 12-dim absolute joint position targets are written directly
-        to ctrl every substep (PD keyframe pose control).
+        Routing:
+          - If cmd.gait == "hind_sit" AND a hind_sit policy is loaded, the
+            42-dim hind_sit obs is built and dispatched to that policy.
+          - Otherwise the 47-dim walker obs is built and dispatched to the
+            walker policy. `cmd.vx/vy/yaw_rate` go into its command channel;
+            cmd.gait == "stand" zeroes that channel.
         """
         mujoco = self._mujoco
 
-        # Map LocomotionCommand -> 3-dim twist for the policy.
+        # Determine which policy is active this tick.
+        use_hind_sit = (cmd.gait == "hind_sit") and (self.hind_sit_policy is not None)
+        active = "hind_sit" if use_hind_sit else "walker"
+
+        # When switching between policies, zero last_action: the two heads
+        # have different action distributions and feeding the wrong one's
+        # stale output is out-of-distribution.
+        if active != self._last_active_policy:
+            self._last_action = np.zeros(12, dtype=np.float32)
+            self._last_active_policy = active
+
+        # Map LocomotionCommand -> 3-dim twist (only used by walker path).
         cmd_arr = self._command_to_twist(cmd)
         self._last_cmd_arr = cmd_arr
 
-        # Resolve joint targets once per step if provided.
-        pose_targets: Optional[np.ndarray] = None
-        if cmd.joint_targets is not None:
-            pose_targets = np.asarray(cmd.joint_targets, dtype=np.float32)
-            assert pose_targets.shape == (12,), (
-                f"joint_targets must be shape (12,), got {pose_targets.shape}"
-            )
-
         n_substeps = max(1, int(round(dt / self.cfg.physics_dt)))
         for substep in range(n_substeps):
-            if pose_targets is not None:
-                # Keyframe pose control: tanh ramp over ~100 substeps (~0.5 s).
-                _RAMP = 1500
-                key = pose_targets.tobytes()
-                if key != self._last_pose_key:
-                    self._pose_ramp_step = 0
-                    for _i in range(12):
-                        self._pose_start_pos[_i] = mj_data.qpos[self._joint_qpos_adr[_i]]
-                    self._last_pose_key = key
-                t = min(self._pose_ramp_step / _RAMP, 1.0)
-                alpha = float(t)
-                for i in range(12):
-                    start = float(self._pose_start_pos[i])
-                tgt_pos = start + alpha * (float(pose_targets[i]) - start)
-                q  = mj_data.qpos[self._joint_qpos_adr[i]]
-                dq = mj_data.qvel[self._joint_qvel_adr[i]]
-                torque = _KP[i] * (tgt_pos - q) + _KD[i] * (0.0 - dq)
-                torque = float(max(-_EFFORT[i], min(_EFFORT[i], torque)))
-                mj_data.ctrl[self._actuator_ids[i]] = torque
-                self._pose_ramp_step += 1
-            elif substep % self.cfg.decimation == 0:
-                # Walker policy: build obs, infer action, compute targets.
-                obs = self._build_observation(mj_data, cmd_arr)
-                action = self.policy(obs[None, :])[0]
+            # Re-query the active policy every `decimation` physics substeps.
+            if substep % self.cfg.decimation == 0:
+                if use_hind_sit:
+                    obs = self._build_hind_sit_observation(mj_data)
+                    action = self.hind_sit_policy(obs[None, :])[0]
+                else:
+                    obs = self._build_observation(mj_data, cmd_arr)
+                    action = self.policy(obs[None, :])[0]
                 self._last_action = np.asarray(action, dtype=np.float32)
+                # Joint targets = default + scale * action, in MJCF order.
+                # Both policies use the same action_scale and default pose.
                 targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
                 for i in range(12):
-                    q  = mj_data.qpos[self._joint_qpos_adr[i]]
-                    dq = mj_data.qvel[self._joint_qvel_adr[i]]
-                    torque = _KP[i] * (float(targets[i]) - q) + _KD[i] * (0.0 - dq)
-                    torque = float(max(-_EFFORT[i], min(_EFFORT[i], torque)))
-                    mj_data.ctrl[self._actuator_ids[i]] = torque
+                    mj_data.ctrl[self._actuator_ids[i]] = float(targets[i])
 
             mujoco.mj_step(self.mj_model, mj_data)
 
@@ -384,6 +360,40 @@ class PhysicsCat:
     # ------------------------------------------------------------------ #
     # Observation construction
     # ------------------------------------------------------------------ #
+
+    def _build_hind_sit_observation(self, mj_data) -> np.ndarray:
+        """Build the 42-dim observation expected by the hind_sit policy.
+
+        Matches the get_up actor obs (no command, no phase, no height_scan):
+            base_ang_vel(3) + projected_gravity(3) + joint_pos(12)
+                + joint_vel(12) + last_action(12)
+        """
+        base_ang_vel = mj_data.sensordata[self._gyro_adr : self._gyro_adr + 3]
+        xmat = np.asarray(mj_data.xmat[self._base_body_id]).reshape(3, 3)
+        projected_gravity = -xmat[2, :]
+
+        qpos = mj_data.qpos
+        joint_pos = np.array(
+            [qpos[self._joint_qpos_adr[i]] - GO2_DEFAULT_JOINT_POS[i] for i in range(12)],
+            dtype=np.float32,
+        )
+        qvel = mj_data.qvel
+        joint_vel = np.array(
+            [qvel[self._joint_qvel_adr[i]] for i in range(12)],
+            dtype=np.float32,
+        )
+        last_action = self._last_action
+
+        obs = np.concatenate(
+            [
+                np.asarray(base_ang_vel, dtype=np.float32),
+                np.asarray(projected_gravity, dtype=np.float32),
+                joint_pos,
+                joint_vel,
+                last_action,
+            ]
+        ).astype(np.float32)
+        return obs
 
     def _build_observation(self, mj_data, cmd_arr: np.ndarray) -> np.ndarray:
         """Build the exact 48-dim obs the walker was trained against."""
