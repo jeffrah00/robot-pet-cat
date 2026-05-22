@@ -231,6 +231,8 @@ def main() -> int:
         mode_policy=mode_policy,
         decision_period_min_steps=40,
         decision_period_max_steps=120,
+        hind_sit_policy_path=Path("models/hind_sit_v1.pt"),
+        get_up_policy_path=Path("models/get_up_v4c.pt"),
     )
     _log("building BrainEnv with PhysicsCat (this loads the walker)...")
     t0 = time.perf_counter()

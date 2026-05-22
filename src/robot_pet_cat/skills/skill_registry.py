@@ -34,10 +34,8 @@ from .stand import Stand
 from .trot import Trot
 from .turn_in_place import TurnInPlace
 from .walk import Walk
+from .get_up import GetUp
 
-# jump_to is included for the brain's categorical head but raises
-# NotImplementedError at step time until a trained policy is loaded.
-from .jump_to import JumpTo
 
 
 def _build_skills() -> dict[str, Skill]:
@@ -52,8 +50,8 @@ def _build_skills() -> dict[str, Skill]:
         "crouch": Crouch(),
         "look_at": LookAt(),
         "swat": Swat(),
-        "jump_to": JumpTo(),
         "hind_sit": HindSit(),
+        "get_up": GetUp(),
         # Velocity-command locomotion skills
         "stand": Stand(),
         "walk": Walk(),
@@ -74,8 +72,8 @@ SKILL_NAMES: tuple[str, ...] = (
     "crouch",
     "look_at",
     "swat",
-    "jump_to",
     "hind_sit",
+    "get_up",
     # Velocity-command locomotion skills
     "stand",
     "walk",

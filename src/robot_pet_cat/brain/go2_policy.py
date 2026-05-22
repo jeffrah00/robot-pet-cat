@@ -235,6 +235,15 @@ def load_hind_sit_policy(
     return _load_policy(policy_path, obs_dim=42, device=device)
 
 
+
+def load_get_up_policy(
+    policy_path="/workspace/robot-pet-cat/models/get_up_v4c.pt",
+    device: str = "cpu",
+) -> WalkerPolicy:
+    """Load the get_up policy (42-dim obs, no command/phase channels).
+    Defaults to models/get_up_v4c.pt (get_up v4c @ iter 14999).
+    """
+    return _load_policy(policy_path, obs_dim=42, device=device)
 def _load_policy(policy_path, obs_dim: int, device: str) -> WalkerPolicy:
     path = Path(policy_path)
     if path.is_dir():

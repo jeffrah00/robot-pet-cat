@@ -228,6 +228,9 @@ class BrainEnvConfig:
     # .onnx file (preferred), a .pt RSL-RL checkpoint, or a directory
     # containing either. Required when use_physics_cat=True.
     walker_policy_path: Optional[Path] = None
+    # Paths to optional specialty policies (42-dim obs, no command/phase).
+    hind_sit_policy_path: Optional[Path] = None
+    get_up_policy_path: Optional[Path] = None
     # Spawn height for the Go2 base body at reset. 0.32 matches the
     # init_state z in unitree_rl_mjlab's training config.
     physics_spawn_z: float = 0.32
@@ -277,6 +280,8 @@ class BrainEnv:
                 self.mj_model,
                 self.cfg.walker_policy_path,
                 PhysicsCatConfig(spawn_z=self.cfg.physics_spawn_z),
+                hind_sit_policy=self.cfg.hind_sit_policy_path,
+                get_up_policy=self.cfg.get_up_policy_path,
             )
         else:
             self.mj_model = mujoco.MjModel.from_xml_path(str(self.cfg.scene_xml))

@@ -50,6 +50,7 @@ from .go2_policy import (
     WalkerPolicy,
     load_go2_walker_policy,
     load_hind_sit_policy,
+    load_get_up_policy,
 )
 
 
@@ -136,6 +137,7 @@ class PhysicsCat:
         policy: WalkerPolicy | str | Path,
         cfg: Optional[PhysicsCatConfig] = None,
         hind_sit_policy: "WalkerPolicy | str | Path | None" = None,
+        get_up_policy: "WalkerPolicy | str | Path | None" = None,
     ) -> None:
         import mujoco
 
@@ -161,6 +163,14 @@ class PhysicsCat:
         else:
             self.hind_sit_policy = load_hind_sit_policy(hind_sit_policy)
 
+        # Optional get_up policy: dispatched when a skill emits gait="get_up".
+        # Same 42-dim obs as hind_sit (no command/phase channels).
+        if get_up_policy is None:
+            self.get_up_policy = None
+        elif callable(get_up_policy):
+            self.get_up_policy = get_up_policy
+        else:
+            self.get_up_policy = load_get_up_policy(get_up_policy)
         # ---- Index lookups against the compiled MuJoCo model ----------- #
         # Base body and its free-joint qpos/qvel offsets.
         base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, GO2_BASE_BODY)
@@ -316,7 +326,8 @@ class PhysicsCat:
 
         # Determine which policy is active this tick.
         use_hind_sit = (cmd.gait == "hind_sit") and (self.hind_sit_policy is not None)
-        active = "hind_sit" if use_hind_sit else "walker"
+        use_get_up = (cmd.gait == "get_up") and (self.get_up_policy is not None)
+        active = "hind_sit" if use_hind_sit else ("get_up" if use_get_up else "walker")
 
         # When switching between policies, zero last_action: the two heads
         # have different action distributions and feeding the wrong one's
@@ -336,6 +347,9 @@ class PhysicsCat:
                 if use_hind_sit:
                     obs = self._build_hind_sit_observation(mj_data)
                     action = self.hind_sit_policy(obs[None, :])[0]
+                elif use_get_up:
+                    obs = self._build_hind_sit_observation(mj_data)
+                    action = self.get_up_policy(obs[None, :])[0]
                 else:
                     obs = self._build_observation(mj_data, cmd_arr)
                     action = self.policy(obs[None, :])[0]
