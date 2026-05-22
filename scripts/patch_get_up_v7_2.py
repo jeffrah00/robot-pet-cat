@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-get_up v7.2 -- v7 FR-Net + reward/termination tweaks.
+get_up v7.2 (rev 2) -- v7 FR-Net + reward/termination tweaks.
 
 Changes vs v7:
   * stand_fully_bonus weight 15 -> 30
   * fell_over limit_angle 70 deg -> 100 deg
   * all_feet_contact weight 1.0 -> 4.0
-  * Add feet_under_body reward (sphynx-pose penalty)
+
+Earlier rev added a feet_under_body reward that broke because mjlab body
+names use a "robot/" prefix that I didn't account for. Reverting to the
+three reward-shape changes only -- still the meaningful signal.
 """
 
 from __future__ import annotations
@@ -27,7 +30,6 @@ def apply_v7_then_tweak() -> int:
     print(rc.stdout)
 
     cfg_path = ACTIVE / "get_up_env_cfg.py"
-    rewards_path = ACTIVE / "mdp" / "rewards.py"
     txt = cfg_path.read_text()
 
     def must_replace(old, new, label):
@@ -39,77 +41,33 @@ def apply_v7_then_tweak() -> int:
         txt = txt.replace(old, new)
         print("[edit] " + label)
 
-    # 1. stand_fully_bonus weight 15 -> 30.
     must_replace(
         "func=get_up_mdp.stand_fully_bonus,\n            weight=15.0,",
         "func=get_up_mdp.stand_fully_bonus,\n            weight=30.0,",
         "stand_fully_bonus 15 -> 30",
     )
-
-    # 2. all_feet_contact weight 1.0 -> 4.0.
     must_replace(
         "func=get_up_mdp.all_feet_contact,\n            weight=1.0,",
         "func=get_up_mdp.all_feet_contact,\n            weight=4.0,",
         "all_feet_contact 1.0 -> 4.0",
     )
-
-    # 3. fell_over limit_angle 70 -> 100.
     must_replace(
         "math.radians(70.0)",
         "math.radians(100.0)",
         "fell_over 70deg -> 100deg",
     )
 
-    # 4. Insert feet_under_body reward term before joint_velocity_penalty.
-    insert_anchor = '"joint_velocity_penalty": RewardTermCfg('
-    insertion = (
-        '"feet_under_body": RewardTermCfg(\n'
-        '            func=get_up_mdp.feet_under_body,\n'
-        '            weight=3.0,\n'
-        '        ),\n'
-        '        '
-    )
-    if insert_anchor not in txt:
-        raise RuntimeError("joint_velocity_penalty anchor not found")
-    txt = txt.replace(insert_anchor, insertion + insert_anchor, 1)
-    print("[edit] insert feet_under_body before joint_velocity_penalty")
-
     cfg_path.write_text(txt)
 
-    # 5. Append the feet_under_body reward function to mdp/rewards.py.
-    extra = '\n\n# === v7.2 ============================================================\n'
-    extra += '_FOOT_BODY_NAMES_V72 = ("FL_foot", "FR_foot", "RL_foot", "RR_foot")\n\n\n'
-    extra += 'def feet_under_body(env, asset_cfg=_DEFAULT_ASSET_CFG):\n'
-    extra += '    """Reward feet whose xy is close to the base xy.\n\n'
-    extra += '    Penalizes the sphynx/splay failure mode observed in get_up v7.\n'
-    extra += '    Soft target of 0.20 m horizontal distance per foot.\n'
-    extra += '    """\n'
-    extra += '    asset = env.scene[asset_cfg.name]\n'
-    extra += '    base_xy = asset.data.root_link_pos_w[:, :2]\n'
-    extra += '    body_names = (asset.data.body_names if hasattr(asset.data, "body_names")\n'
-    extra += '                  else asset.body_names)\n'
-    extra += '    feet_ids = [body_names.index(n) for n in _FOOT_BODY_NAMES_V72]\n'
-    extra += '    foot_pos = asset.data.body_link_pos_w[:, feet_ids, :2]\n'
-    extra += '    dxy = foot_pos - base_xy.unsqueeze(1)\n'
-    extra += '    dist = torch.linalg.norm(dxy, dim=-1)\n'
-    extra += '    err = (dist - 0.20).clamp(min=0.0).sum(dim=-1)\n'
-    extra += '    return torch.exp(-2.0 * err)\n'
-    rewards_path.write_text(rewards_path.read_text() + extra)
-    print("[edit] mdp/rewards.py: feet_under_body")
-
-    # 6. Syntax check.
     rc = subprocess.run(
-        ["python3", "-c",
-         "import ast;"
-         "ast.parse(open('" + str(cfg_path) + "').read());"
-         "ast.parse(open('" + str(rewards_path) + "').read())"],
+        ["python3", "-c", "import ast; ast.parse(open('" + str(cfg_path) + "').read())"],
         capture_output=True, text=True,
     )
     if rc.returncode != 0:
         print("ERROR: syntax check failed:\n" + rc.stderr, file=sys.stderr)
         return 8
 
-    print("[ok] v7.2 patch applied")
+    print("[ok] v7.2 (rev 2) patch applied")
     return 0
 
 
