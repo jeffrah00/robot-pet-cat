@@ -46,7 +46,8 @@ def main():
     all_poses = []
     for probe in range(N_PROBES):
         env.reset()
-        obs, _ = env.get_observations()
+        obs = env.get_observations()
+        if isinstance(obs, tuple): obs = obs[0]
         for step in range(N_STEPS):
             with torch.no_grad():
                 actions = policy(obs)
