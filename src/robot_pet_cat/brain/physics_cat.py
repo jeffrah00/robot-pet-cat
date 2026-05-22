@@ -57,7 +57,7 @@ from .go2_policy import (
 DEFAULT_BASE_SPAWN_Z = 0.32
 
 # Name of the Go2 base body in menagerie's go2_mjx.xml.
-GO2_BASE_BODY = "base"
+GO2_BASE_BODY = "base_link"
 
 
 def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
@@ -441,8 +441,6 @@ class PhysicsCat:
             [
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
-                np.asarray(command, dtype=np.float32),
-                phase,
                 joint_pos,
                 joint_vel,
                 last_action,
