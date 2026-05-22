@@ -154,35 +154,76 @@ class _TorchWalkerPolicy:
         self._load_checkpoint(ckpt_path)
 
     def _load_checkpoint(self, ckpt_path: Path) -> None:
+        """Load weights + obs normalizer from an rsl_rl-style checkpoint.
+
+        Supports two checkpoint layouts in the wild:
+          a) Old / vanilla rsl_rl:
+             {"model_state_dict": {"actor.0.weight": ..., "actor.0.bias": ...,
+              "obs_normalizer.running_mean": ..., "obs_normalizer.running_var": ...}}
+          b) mjlab (unitree_rl_mjlab) save format:
+             {"actor_state_dict": {"mlp.0.weight": ..., "mlp.0.bias": ...,
+              "obs_normalizer._mean": ..., "obs_normalizer._var": ...,
+              "distribution.std_param": ..., ...}, "critic_state_dict": ...}
+        """
         torch = self._torch
         blob = torch.load(str(ckpt_path), map_location=self.device, weights_only=False)
 
-        sd = blob.get("model_state_dict") or blob.get("state_dict") or blob
-        if not isinstance(sd, dict):
-            raise RuntimeError(
-                "Unrecognized checkpoint shape: " + type(sd).__name__
-            )
-
-        actor_weights: dict = {}
-        for k, v in sd.items():
-            if k.startswith("actor."):
-                actor_weights[k[len("actor."):]] = v
-            elif k.startswith("policy.actor."):
-                actor_weights[k[len("policy.actor."):]] = v
-            elif k.startswith("obs_normalizer.") or k.startswith("normalizer."):
-                tail = k.split(".", 1)[1]
-                if tail in ("running_mean", "mean"):
-                    self.normalizer_mean = v.to(self.device)
-                    self._has_normalizer = True
-                elif tail in ("running_var", "var"):
-                    self.normalizer_var = v.to(self.device)
-                    self._has_normalizer = True
-
-        if not actor_weights:
-            raise RuntimeError(
-                "No actor weights found. Keys in state_dict: "
-                + str(list(sd.keys())[:20])
-            )
+        # Prefer the mjlab layout if present.
+        if isinstance(blob, dict) and "actor_state_dict" in blob:
+            asd = blob["actor_state_dict"]
+            actor_weights: dict = {}
+            for k, v in asd.items():
+                if k.startswith("mlp."):
+                    # Strip "mlp." -> matches our nn.Sequential layer indices.
+                    actor_weights[k[len("mlp."):]] = v
+                elif k.startswith("obs_normalizer."):
+                    tail = k.split(".", 1)[1]
+                    # mjlab uses `_mean` and `_var` (with the underscore);
+                    # they are shape [1, obs_dim], so squeeze to [obs_dim].
+                    if tail in ("_mean", "mean", "running_mean"):
+                        m = v
+                        if m.ndim == 2 and m.shape[0] == 1:
+                            m = m.squeeze(0)
+                        self.normalizer_mean = m.to(self.device)
+                        self._has_normalizer = True
+                    elif tail in ("_var", "var", "running_var"):
+                        vv = v
+                        if vv.ndim == 2 and vv.shape[0] == 1:
+                            vv = vv.squeeze(0)
+                        self.normalizer_var = vv.to(self.device)
+                        self._has_normalizer = True
+                # `distribution.std_param` and other non-actor fields ignored.
+            if not actor_weights:
+                raise RuntimeError(
+                    "actor_state_dict has no mlp.* weights. Keys: "
+                    + str(list(asd.keys())[:20])
+                )
+        else:
+            # Old format.
+            sd = blob.get("model_state_dict") or blob.get("state_dict") or blob
+            if not isinstance(sd, dict):
+                raise RuntimeError(
+                    "Unrecognized checkpoint shape: " + type(sd).__name__
+                )
+            actor_weights = {}
+            for k, v in sd.items():
+                if k.startswith("actor."):
+                    actor_weights[k[len("actor."):]] = v
+                elif k.startswith("policy.actor."):
+                    actor_weights[k[len("policy.actor."):]] = v
+                elif k.startswith("obs_normalizer.") or k.startswith("normalizer."):
+                    tail = k.split(".", 1)[1]
+                    if tail in ("running_mean", "mean"):
+                        self.normalizer_mean = v.to(self.device)
+                        self._has_normalizer = True
+                    elif tail in ("running_var", "var"):
+                        self.normalizer_var = v.to(self.device)
+                        self._has_normalizer = True
+            if not actor_weights:
+                raise RuntimeError(
+                    "No actor weights found. Keys in state_dict: "
+                    + str(list(sd.keys())[:20])
+                )
 
         missing, _ = self.actor.load_state_dict(actor_weights, strict=False)
         actor_param_keys = set(self.actor.state_dict().keys())
@@ -202,78 +243,4 @@ class _TorchWalkerPolicy:
             if self._has_normalizer:
                 x = (x - self.normalizer_mean) / torch.sqrt(self.normalizer_var + 1e-8)
             out = self.actor(x)
-        return out.detach().cpu().numpy().astype(np.float32)
-
-
-# --------------------------------------------------------------------------- #
-# Public loaders
-# --------------------------------------------------------------------------- #
-
-
-def load_go2_walker_policy(
-    policy_path: "str | Path",
-    device: str = "cpu",
-) -> WalkerPolicy:
-    """Load the Go2 velocity walker (47-dim obs). Accepts .onnx, .pt, .pth,
-    or a directory containing policy.onnx / model_*.pt."""
-    return _load_policy(policy_path, obs_dim=47, device=device)
-
-
-def load_hind_sit_policy(
-    policy_path: "str | Path" = "/workspace/robot-pet-cat/models/hind_sit_v1.pt",
-    device: str = "cpu",
-) -> WalkerPolicy:
-    """Load the hind_sit policy (42-dim obs, no command/phase channels).
-
-    Defaults to models/hind_sit_v1.pt (the get_up v4b @ iter 13000 checkpoint).
-    Same actor architecture as the walker; only obs_dim differs.
-    """
-    return _load_policy(policy_path, obs_dim=42, device=device)
-
-
-def _load_policy(
-    policy_path: "str | Path",
-    obs_dim: int,
-    device: str,
-) -> WalkerPolicy:
-    path = Path(policy_path)
-    if path.is_dir():
-        onnx_candidate = path / "policy.onnx"
-        if onnx_candidate.is_file():
-            path = onnx_candidate
-        else:
-            pts = sorted(
-                path.glob("model_*.pt"),
-                key=lambda p: _iter_from_name(p.name),
-                reverse=True,
-            )
-            if not pts:
-                raise FileNotFoundError(
-                    "No policy.onnx or model_*.pt found under " + str(path)
-                )
-            path = pts[0]
-
-    if not path.is_file():
-        raise FileNotFoundError(path)
-
-    suffix = path.suffix.lower()
-    if suffix == ".onnx":
-        return _OnnxWalkerPolicy(path)
-    if suffix in (".pt", ".pth"):
-        return _TorchWalkerPolicy(path, TorchWalkerConfig(obs_dim=obs_dim, device=device))
-    raise ValueError(
-        "Unrecognized policy extension " + repr(suffix)
-        + "; expected .onnx, .pt, or .pth"
-    )
-
-
-def _iter_from_name(name: str) -> int:
-    """Parse iter index out of 'model_6400.pt'-style filenames; 0 on failure."""
-    stem = Path(name).stem
-    if "_" not in stem:
-        return 0
-    tail = stem.rsplit("_", 1)[1]
-    try:
-        return int(tail)
-    except ValueError:
-        return 0
+        return out.de
