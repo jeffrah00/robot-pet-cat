@@ -398,14 +398,12 @@ class PhysicsCat:
         )
         last_action = self._last_action
 
-        # 47-dim: base_ang_vel(3) + proj_grav(3) + command(3) + phase(2)
-        #          + joint_pos(12) + joint_vel(12) + last_action(12)
+        # 47-dim walker obs: base_ang_vel(3)+proj_grav(3)+cmd(3)+phase(2)+joint_pos(12)+joint_vel(12)+action(12)
+        # 42-dim: base_ang_vel(3)+proj_grav(3)+joint_pos(12)+joint_vel(12)+action(12)
         obs = np.concatenate(
             [
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
-                command,
-                phase,
                 joint_pos,
                 joint_vel,
                 last_action,
@@ -455,10 +453,13 @@ class PhysicsCat:
         # 7. last_action (12)
         last_action = self._last_action
 
+        # 47-dim: base_ang_vel(3)+proj_grav(3)+cmd(3)+phase(2)+joint_pos(12)+joint_vel(12)+action(12)
         obs = np.concatenate(
             [
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
+                command,
+                phase,
                 joint_pos,
                 joint_vel,
                 last_action,
