@@ -635,22 +635,21 @@ class BrainEnv:
         skill.advance_to_airborne()
 
 
-    def _decay_ball_velocity(self, ball_id: int) -> None:
-        """Apply rolling friction to the ball each step."""
+    def _decay_ball_velocity(self, decay_per_s: float = 0.9) -> None:
+        """Apply rolling friction to all ball joints each step."""
         import mujoco
-        jnt_name = f"ball_{ball_id}_joint"
-        jnt_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, jnt_name)
-        if jnt_id < 0:
-            return
-        qadr = self.mj_model.jnt_qposadr[jnt_id]
-        vadr = self.mj_model.jnt_dofadr[jnt_id]
-        vel = self.mj_data.qvel[vadr : vadr + 3]
-        speed = float(np.linalg.norm(vel))
-        if speed > 1e-4:
-            friction = min(speed, self.cfg.ball_rolling_friction * self.cfg.physics_dt)
-            self.mj_data.qvel[vadr : vadr + 3] = vel * (1.0 - friction / speed)
-        else:
-            self.mj_data.qvel[vadr : vadr + 3] = 0.0
+        for jnt_id in range(self.mj_model.njnt):
+            jnt_name = mujoco.mj_id2name(self.mj_model, mujoco.mjtObj.mjOBJ_JOINT, jnt_id) or ""
+            if not jnt_name.startswith("ball_") or not jnt_name.endswith("_joint"):
+                continue
+            vadr = self.mj_model.jnt_dofadr[jnt_id]
+            vel = self.mj_data.qvel[vadr : vadr + 3]
+            speed = float(np.linalg.norm(vel))
+            if speed > 1e-4:
+                friction = min(speed, self.cfg.ball_rolling_friction * self.cfg.physics_dt)
+                self.mj_data.qvel[vadr : vadr + 3] = vel * (1.0 - friction / speed)
+            else:
+                self.mj_data.qvel[vadr : vadr + 3] = 0.0
 
     def _find_free_joint_for_body(self, body_name: str) -> str:
         """Return the name of the free joint attached to body_name, or empty string."""
