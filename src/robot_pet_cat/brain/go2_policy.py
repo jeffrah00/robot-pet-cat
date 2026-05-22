@@ -1,28 +1,26 @@
-"""Loader for the unitree_rl_mjlab Go2 velocity walker policy + hind_sit policy.
+"""Loader for the unitree_rl_mjlab Go2 walker policy + hind_sit policy.
 
-The walker on the pod is trained by unitree_rl_mjlab (RSL-RL backend) against
-the Go2 velocity task. Each training save writes both:
-
-  - logs/.../model_<iter>.pt   -- RSL-RL OnPolicyRunner checkpoint
-  - logs/.../policy.onnx       -- exported ONNX (obs-normalizer baked in)
-
-ONNX is the preferred path for external integration. The .pt path is the
-fallback when only the runner checkpoint is on disk. It requires rsl_rl
-to be installed and rebuilds the actor MLP + normalizer manually before
-loading weights.
+Supports two RSL-RL checkpoint layouts in the wild:
+  a) Old / vanilla rsl_rl:
+     {"model_state_dict": {"actor.0.weight": ..., "actor.0.bias": ...,
+      "obs_normalizer.running_mean": ..., "obs_normalizer.running_var": ...}}
+  b) mjlab (unitree_rl_mjlab) save format:
+     {"actor_state_dict": {"mlp.0.weight": ..., "mlp.0.bias": ...,
+      "obs_normalizer._mean": ..., "obs_normalizer._var": ...,
+      "distribution.std_param": ...}, "critic_state_dict": ...}
 
 Walker policy contract (47 dims, flat env):
     base_ang_vel(3) + projected_gravity(3) + command(3) + phase(2)
         + joint_pos(12) + joint_vel(12) + last_action(12)
 
-Hind_sit policy contract (42 dims, from the get_up task):
+Hind_sit policy contract (42 dims, from get_up task, no command/phase):
     base_ang_vel(3) + projected_gravity(3) + joint_pos(12) + joint_vel(12)
         + last_action(12)
 The hind_sit policy was the get_up v4b checkpoint at model_13000.pt and is
-packaged at models/hind_sit_v1.pt. The actor MLP shape is the same as the
-walker (512, 256, 128) -- only the input dim differs.
+packaged at models/hind_sit_v1.pt. Same MLP shape as the walker (512, 256,
+128); only obs_dim differs.
 
-Joint order (MJCF):
+Joint order (MJCF compile order in menagerie's go2_mjx.xml):
     FL_hip, FL_thigh, FL_calf,
     FR_hip, FR_thigh, FR_calf,
     RL_hip, RL_thigh, RL_calf,
@@ -38,13 +36,12 @@ from typing import Optional, Protocol
 import numpy as np
 
 
-# Default joint positions in MJCF compile order (FL, FR, RL, RR).
 GO2_DEFAULT_JOINT_POS = np.array(
     [
-        -0.10, 0.90, -1.80,   # FL
-        +0.10, 0.90, -1.80,   # FR
-        -0.10, 0.90, -1.80,   # RL
-        +0.10, 0.90, -1.80,   # RR
+        -0.10, 0.90, -1.80,
+        +0.10, 0.90, -1.80,
+        -0.10, 0.90, -1.80,
+        +0.10, 0.90, -1.80,
     ],
     dtype=np.float32,
 )
@@ -59,7 +56,7 @@ GO2_JOINT_NAMES = [
 GO2_ACTION_SCALE = 0.25
 GO2_PHYSICS_DT = 0.005
 GO2_POLICY_DECIMATION = 4
-GO2_POLICY_DT = GO2_PHYSICS_DT * GO2_POLICY_DECIMATION  # 0.02 s, 50 Hz
+GO2_POLICY_DT = GO2_PHYSICS_DT * GO2_POLICY_DECIMATION
 GO2_PHASE_PERIOD = 0.6
 GO2_PHASE_STAND_THRESHOLD = 0.1
 
@@ -67,18 +64,15 @@ GO2_PHASE_STAND_THRESHOLD = 0.1
 class WalkerPolicy(Protocol):
     """Callable that maps obs[N,*] -> action[N,12]. Obs dim depends on which
     policy: 47 for the walker, 42 for hind_sit."""
-
     def __call__(self, obs: np.ndarray) -> np.ndarray: ...
 
 
 # --------------------------------------------------------------------------- #
-# ONNX path -- preferred when available
+# ONNX path
 # --------------------------------------------------------------------------- #
 
 
 class _OnnxWalkerPolicy:
-    """Wraps onnxruntime InferenceSession around any Go2 policy export."""
-
     def __init__(self, onnx_path: Path, providers: Optional[list[str]] = None):
         import onnxruntime as ort
 
@@ -106,14 +100,12 @@ class _OnnxWalkerPolicy:
 
 
 # --------------------------------------------------------------------------- #
-# .pt path -- requires rsl_rl style checkpoints
+# .pt path
 # --------------------------------------------------------------------------- #
 
 
 @dataclass
 class TorchWalkerConfig:
-    """Generic config for a torch-loaded rsl_rl actor. Use obs_dim=47 for
-    the walker, obs_dim=42 for hind_sit. Same hidden dims either way."""
     obs_dim: int = 47
     action_dim: int = 12
     hidden_dims: tuple = (512, 256, 128)
@@ -122,14 +114,6 @@ class TorchWalkerConfig:
 
 
 class _TorchWalkerPolicy:
-    """Rebuilds the RSL-RL actor + EmpiricalNormalization and loads weights.
-
-    Keys in model_<iter>.pt look like:
-        actor.0.weight, actor.0.bias, actor.2.weight, actor.2.bias, ...
-        obs_normalizer.running_mean, obs_normalizer.running_var,
-            obs_normalizer.count
-    """
-
     def __init__(self, ckpt_path: Path, cfg: Optional[TorchWalkerConfig] = None):
         import torch
         import torch.nn as nn
@@ -154,32 +138,18 @@ class _TorchWalkerPolicy:
         self._load_checkpoint(ckpt_path)
 
     def _load_checkpoint(self, ckpt_path: Path) -> None:
-        """Load weights + obs normalizer from an rsl_rl-style checkpoint.
-
-        Supports two checkpoint layouts in the wild:
-          a) Old / vanilla rsl_rl:
-             {"model_state_dict": {"actor.0.weight": ..., "actor.0.bias": ...,
-              "obs_normalizer.running_mean": ..., "obs_normalizer.running_var": ...}}
-          b) mjlab (unitree_rl_mjlab) save format:
-             {"actor_state_dict": {"mlp.0.weight": ..., "mlp.0.bias": ...,
-              "obs_normalizer._mean": ..., "obs_normalizer._var": ...,
-              "distribution.std_param": ..., ...}, "critic_state_dict": ...}
-        """
         torch = self._torch
         blob = torch.load(str(ckpt_path), map_location=self.device, weights_only=False)
 
-        # Prefer the mjlab layout if present.
         if isinstance(blob, dict) and "actor_state_dict" in blob:
+            # mjlab format
             asd = blob["actor_state_dict"]
             actor_weights: dict = {}
             for k, v in asd.items():
                 if k.startswith("mlp."):
-                    # Strip "mlp." -> matches our nn.Sequential layer indices.
                     actor_weights[k[len("mlp."):]] = v
                 elif k.startswith("obs_normalizer."):
                     tail = k.split(".", 1)[1]
-                    # mjlab uses `_mean` and `_var` (with the underscore);
-                    # they are shape [1, obs_dim], so squeeze to [obs_dim].
                     if tail in ("_mean", "mean", "running_mean"):
                         m = v
                         if m.ndim == 2 and m.shape[0] == 1:
@@ -192,14 +162,12 @@ class _TorchWalkerPolicy:
                             vv = vv.squeeze(0)
                         self.normalizer_var = vv.to(self.device)
                         self._has_normalizer = True
-                # `distribution.std_param` and other non-actor fields ignored.
             if not actor_weights:
                 raise RuntimeError(
                     "actor_state_dict has no mlp.* weights. Keys: "
                     + str(list(asd.keys())[:20])
                 )
         else:
-            # Old format.
             sd = blob.get("model_state_dict") or blob.get("state_dict") or blob
             if not isinstance(sd, dict):
                 raise RuntimeError(
@@ -243,4 +211,68 @@ class _TorchWalkerPolicy:
             if self._has_normalizer:
                 x = (x - self.normalizer_mean) / torch.sqrt(self.normalizer_var + 1e-8)
             out = self.actor(x)
-        return out.de
+        return out.detach().cpu().numpy().astype(np.float32)
+
+
+# --------------------------------------------------------------------------- #
+# Public loaders
+# --------------------------------------------------------------------------- #
+
+
+def load_go2_walker_policy(policy_path, device: str = "cpu") -> WalkerPolicy:
+    """Load the Go2 velocity walker (47-dim obs)."""
+    return _load_policy(policy_path, obs_dim=47, device=device)
+
+
+def load_hind_sit_policy(
+    policy_path="/workspace/robot-pet-cat/models/hind_sit_v1.pt",
+    device: str = "cpu",
+) -> WalkerPolicy:
+    """Load the hind_sit policy (42-dim obs, no command/phase channels).
+
+    Defaults to models/hind_sit_v1.pt (get_up v4b @ iter 13000).
+    """
+    return _load_policy(policy_path, obs_dim=42, device=device)
+
+
+def _load_policy(policy_path, obs_dim: int, device: str) -> WalkerPolicy:
+    path = Path(policy_path)
+    if path.is_dir():
+        onnx_candidate = path / "policy.onnx"
+        if onnx_candidate.is_file():
+            path = onnx_candidate
+        else:
+            pts = sorted(
+                path.glob("model_*.pt"),
+                key=lambda p: _iter_from_name(p.name),
+                reverse=True,
+            )
+            if not pts:
+                raise FileNotFoundError(
+                    "No policy.onnx or model_*.pt found under " + str(path)
+                )
+            path = pts[0]
+
+    if not path.is_file():
+        raise FileNotFoundError(path)
+
+    suffix = path.suffix.lower()
+    if suffix == ".onnx":
+        return _OnnxWalkerPolicy(path)
+    if suffix in (".pt", ".pth"):
+        return _TorchWalkerPolicy(path, TorchWalkerConfig(obs_dim=obs_dim, device=device))
+    raise ValueError(
+        "Unrecognized policy extension " + repr(suffix)
+        + "; expected .onnx, .pt, or .pth"
+    )
+
+
+def _iter_from_name(name: str) -> int:
+    stem = Path(name).stem
+    if "_" not in stem:
+        return 0
+    tail = stem.rsplit("_", 1)[1]
+    try:
+        return int(tail)
+    except ValueError:
+        return 0
