@@ -135,7 +135,7 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
 
     if skill_name in ("sit", "lie_down", "crouch", "get_up",
                        "stand", "walk", "prowl", "trot",
-                       "back_up", "turn_in_place", "swat", "hind_sit"):
+                       "back_up", "turn_in_place", "hind_sit"):
         return None
     if skill_name == "stretch":
         return StretchGoal(duration_s=2.0)
@@ -154,6 +154,11 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
         if elev is not None:
             return JumpToGoal(surface_xyz=tuple(float(v) for v in elev.pos_xyz))
         return None
+    if skill_name == "swat":
+        from robot_pet_cat.skills.swat import SwatGoal
+        if play is not None:
+            return SwatGoal(point_xyz=tuple(float(v) for v in play.pos_xyz))
+        return SwatGoal(point_xyz=(1.0, 0.0, 0.3))
     raise KeyError(f"no default goal recipe for skill {skill_name!r}")
 
 
