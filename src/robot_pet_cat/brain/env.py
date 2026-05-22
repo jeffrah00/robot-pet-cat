@@ -133,7 +133,9 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
     from robot_pet_cat.skills.stretch import StretchGoal
     from robot_pet_cat.skills.walk_to import WalkToGoal
 
-    if skill_name in ("sit", "lie_down", "crouch", "get_up"):
+    if skill_name in ("sit", "lie_down", "crouch", "get_up",
+                       "stand", "walk", "prowl", "trot",
+                       "back_up", "turn_in_place", "swat", "hind_sit"):
         return None
     if skill_name == "stretch":
         return StretchGoal(duration_s=2.0)
