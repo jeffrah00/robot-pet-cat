@@ -28,6 +28,12 @@ from .skill_policy import Skill
 from .stretch import Stretch
 from .swat import Swat
 from .walk_to import WalkTo
+from .back_up import BackUp
+from .prowl import Prowl
+from .stand import Stand
+from .trot import Trot
+from .turn_in_place import TurnInPlace
+from .walk import Walk
 
 # jump_to is included for the brain's categorical head but raises
 # NotImplementedError at step time until a trained policy is loaded.
@@ -48,6 +54,13 @@ def _build_skills() -> dict[str, Skill]:
         "swat": Swat(),
         "jump_to": JumpTo(),
         "hind_sit": HindSit(),
+        # Velocity-command locomotion skills
+        "stand": Stand(),
+        "walk": Walk(),
+        "prowl": Prowl(),
+        "trot": Trot(),
+        "back_up": BackUp(),
+        "turn_in_place": TurnInPlace(),
     }
 
 
@@ -63,6 +76,13 @@ SKILL_NAMES: tuple[str, ...] = (
     "swat",
     "jump_to",
     "hind_sit",
+    # Velocity-command locomotion skills
+    "stand",
+    "walk",
+    "prowl",
+    "trot",
+    "back_up",
+    "turn_in_place",
 )
 
 SKILL_INDEX: dict[str, int] = {name: i for i, name in enumerate(SKILL_NAMES)}
