@@ -398,10 +398,14 @@ class PhysicsCat:
         )
         last_action = self._last_action
 
+        # 47-dim: base_ang_vel(3) + proj_grav(3) + command(3) + phase(2)
+        #          + joint_pos(12) + joint_vel(12) + last_action(12)
         obs = np.concatenate(
             [
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
+                command,
+                phase,
                 joint_pos,
                 joint_vel,
                 last_action,
@@ -410,7 +414,7 @@ class PhysicsCat:
         return obs
 
     def _build_observation(self, mj_data, cmd_arr: np.ndarray) -> np.ndarray:
-        """Build the exact 48-dim obs the walker was trained against."""
+        """Build the 47-dim obs the flat velocity walker was trained against."""
         # 1. base_ang_vel (3) -- gyro reading.
         base_ang_vel = mj_data.sensordata[self._gyro_adr : self._gyro_adr + 3]
 
