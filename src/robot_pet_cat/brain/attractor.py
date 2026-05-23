@@ -63,13 +63,50 @@ class Attractor(str, Enum):
 #
 # `walk_to` and `look_at` appear in many modes because they're general-purpose
 # competence skills, not character-defining.
+#
+# 2026-05-23 revision: per-mode allow-lists redistributed across all 15
+# SKILL_NAMES entries. Three universal skills appear in every mode:
+#   - get_up      : recovery from fall (mode-agnostic, the original gap)
+#   - stand       : default upright posture / transition state
+#   - look_at     : visual attention is always available to a cat
+# All other skills land in the mode(s) where they fit the mode's character.
+# MODE_HARD_BLOCKED (below) still denies locomotion during rest/groom even
+# when soft-pass would let it through.
 MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
-    Attractor.RESTING:   ("sit", "lie_down", "look_at"),
-    Attractor.OBSERVING: ("look_at", "walk_to"),
-    Attractor.STALKING:  ("crouch", "walk_to", "look_at"),
-    Attractor.PLAYING:   ("swat", "walk_to", "jump_to"),
-    Attractor.GROOMING:  ("sit", "lie_down", "look_at"),
-    Attractor.EXPLORING: ("walk_to", "look_at"),
+    # Settled, low energy. Postural skills + recovery + visual attention.
+    Attractor.RESTING:   (
+        "sit", "lie_down", "stretch", "hind_sit",
+        "look_at", "stand", "get_up",
+    ),
+    # Alert but not pursuing. Look around, change vantage, sit up to see.
+    Attractor.OBSERVING: (
+        "look_at", "sit", "hind_sit", "stretch",
+        "turn_in_place", "walk_to",
+        "stand", "get_up",
+    ),
+    # Pre-pounce, locked on something. Crouch, slow stalk, prowl.
+    Attractor.STALKING:  (
+        "crouch", "prowl", "walk", "walk_to",
+        "look_at", "turn_in_place",
+        "stand", "get_up",
+    ),
+    # Active engagement with a play target. Swat, chase, dart around.
+    Attractor.PLAYING:   (
+        "swat", "walk", "trot", "walk_to",
+        "turn_in_place", "back_up", "prowl",
+        "look_at", "stand", "get_up",
+    ),
+    # Static / quiet self-care. Same shape as resting; mood distinguishes.
+    Attractor.GROOMING:  (
+        "sit", "lie_down", "stretch", "hind_sit",
+        "look_at", "stand", "get_up",
+    ),
+    # Locomotion-dominant, low-engagement wandering.
+    Attractor.EXPLORING: (
+        "walk", "trot", "walk_to", "turn_in_place", "back_up",
+        "stretch",
+        "look_at", "stand", "get_up",
+    ),
 }
 
 # Skills that must NEVER execute in a mode, even when the mode_soft_pass coin
