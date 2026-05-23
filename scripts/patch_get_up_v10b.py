@@ -78,17 +78,14 @@ def main() -> int:
     if "_curriculum_alpha_v10b" not in txt:
         txt += V10B_CURRICULUM_BLOCK
 
-    # 3. Edit v7's jitter to be alpha-scaled. v7 wrote these lines into
-    #    events.py inside reset_to_random_fallen_pose:
-    #
-    #        joint_pos = joint_pos + (torch.rand_like(joint_pos) - 0.5) * 0.6
-    #        ...
-    #        rpy_noise = (torch.rand((num_resets, 3), device=device) - 0.5) * 0.4
-    #
-    # Replace the constants 0.6 and 0.4 with alpha * 0.6 and alpha * 0.4.
+    # 3. Edit v7's jitter to be alpha-scaled. Anchor matches the substring
+    #    AFTER the 4-space line prefix; the leading "    " stays in the
+    #    file. So new_jp's first line must NOT have leading whitespace --
+    #    the file's existing 4 spaces become the indent. Subsequent lines
+    #    need their own explicit 4 spaces.
     old_jp = "joint_pos = joint_pos + (torch.rand_like(joint_pos) - 0.5) * 0.6"
     new_jp = (
-        "    _alpha_v10b = _curriculum_alpha_v10b(env)\n"
+        "_alpha_v10b = _curriculum_alpha_v10b(env)\n"
         "    joint_pos = joint_pos + (torch.rand_like(joint_pos) - 0.5) * (0.6 * _alpha_v10b)"
     )
     if old_jp not in txt:
@@ -109,11 +106,11 @@ def main() -> int:
     # 4. Syntax check.
     rc = subprocess.run(
         ["python3", "-c",
-         f"import ast; ast.parse(open('{events_path}').read())"],
+         "import ast; ast.parse(open('" + str(events_path) + "').read())"],
         capture_output=True, text=True,
     )
     if rc.returncode != 0:
-        print(f"ERROR: syntax check failed:\n{rc.stderr}", file=sys.stderr)
+        print("ERROR: syntax check failed:\n" + rc.stderr, file=sys.stderr)
         return 5
 
     print("[ok] v10b patch applied")

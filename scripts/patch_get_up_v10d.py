@@ -11,15 +11,16 @@ keeping the ACTOR at v7's proprioception+FR-Net obs should yield cleaner
 advantages without changing the deployed policy's input space.
 
 Mechanism:
-  * Add a new critic-only obs term `priv_root_state` that returns
-    (root_pos_w[:, 2], root_quat_w, root_lin_vel_w, root_ang_vel_w) = 11-dim
-    (height + quat + linvel + angvel) appended to the critic's obs vector.
-  * Add a new critic-only obs term `priv_contact_state` that returns the
-    4-dim foot-contact state from the feet_ground_contact sensor.
-  * Insert BOTH terms into critic_terms only, leaving actor_terms untouched.
+  * Add critic-only obs `priv_root_state`: base height + quat + body-frame
+    linear and angular velocity = 11-dim.
+  * Add critic-only obs `priv_contact_state`: 4-dim foot-contact state.
 
 KEEP v7 termination, FR-Net, v4c rewards, target_height 0.30, jitter. Only
 adds critic-side observations.
+
+v10d v2 fix: avoid `root_lin_vel_w` / `root_ang_vel_w` (don't exist on
+mjlab's EntityData). Use root_lin_vel_b + root_ang_vel_b (body frame),
+which v7's contact_predictor.py also touches.
 
 Usage on a runpod:
   python3 scripts/patch_get_up_v10d.py
@@ -42,16 +43,20 @@ V10D_OBS_BLOCK = '''
 
 # === v10d (asymmetric critic-only privileged obs) ===================
 def priv_root_state(env, asset_cfg=_DEFAULT_ASSET_CFG):
-    """Critic-only: base height + quat + linvel + angvel = 11-dim.
+    """Critic-only: base height + quat + linvel(body) + angvel(body) = 11-dim.
 
-    Privileged because deployed policy can't read root pose directly; only
-    the critic uses this to estimate V(s) more accurately in fallen states.
+    Privileged because the deployed policy can't read root pose / world-frame
+    velocity directly. Use the attribute names that v7's contact_predictor.py
+    already touches (root_link_pos_w, root_lin_vel_b, root_ang_vel_b) and
+    avoid root_lin_vel_w which mjlab's EntityData lacks.
     """
     asset = env.scene[asset_cfg.name]
     z = asset.data.root_link_pos_w[:, 2:3]
-    quat = asset.data.root_link_quat_w
-    lin = asset.data.root_lin_vel_w
-    ang = asset.data.root_ang_vel_w
+    quat = getattr(asset.data, "root_link_quat_w", None)
+    if quat is None:
+        quat = asset.data.root_quat_w
+    lin = asset.data.root_lin_vel_b
+    ang = asset.data.root_ang_vel_b
     return torch.cat([z, quat, lin, ang], dim=-1)
 
 
@@ -72,31 +77,21 @@ def priv_contact_state(env, sensor_name: str = "feet_ground_contact"):
 
 
 def main() -> int:
-    # 1. Apply v7 first.
     rc = subprocess.run(["python3", str(V7)])
     if rc.returncode != 0:
-        print(f"ERROR: v7 patcher failed (rc={rc.returncode})", file=sys.stderr)
+        print("ERROR: v7 patcher failed rc=" + str(rc.returncode), file=sys.stderr)
         return rc.returncode
 
     obs_path = ACTIVE / "mdp" / "observations.py"
     cfg_path = ACTIVE / "get_up_env_cfg.py"
 
-    # 2. Append both critic obs functions.
     obs_path.write_text(obs_path.read_text() + V10D_OBS_BLOCK)
     print("[edit] mdp/observations.py: priv_root_state, priv_contact_state")
 
-    # 3. Register BOTH in critic_terms only. v7 leaves a `  critic_terms = {`
-    #    line. Find the FIRST term inside critic_terms and prepend ours.
-    #    The structure is roughly:
-    #      critic_terms = {
-    #        "policy_action": ObservationTermCfg(...),
-    #        ...
-    #      }
-    #    Insert two new terms at the top of the dict.
     txt = cfg_path.read_text()
     anchor = "  critic_terms = {\n"
     if anchor not in txt:
-        print(f"ERROR: anchor not found: {anchor!r}", file=sys.stderr)
+        print("ERROR: anchor not found: " + repr(anchor), file=sys.stderr)
         return 3
     insertion = (
         '  critic_terms = {\n'
@@ -108,12 +103,10 @@ def main() -> int:
         '      params={"sensor_name": "feet_ground_contact"},\n'
         '    ),\n'
     )
-    # Only replace the first occurrence.
     txt = txt.replace(anchor, insertion, 1)
     cfg_path.write_text(txt)
     print("[edit] get_up_env_cfg.py: prepended priv_root_state + priv_contact_state to critic_terms")
 
-    # 4. Re-export through mdp/__init__.py if needed.
     init_path = ACTIVE / "mdp" / "__init__.py"
     if init_path.exists():
         init_txt = init_path.read_text()
@@ -122,16 +115,15 @@ def main() -> int:
             init_path.write_text(init_txt)
             print("[edit] mdp/__init__.py: re-export v10d symbols")
 
-    # 5. Syntax check.
     rc = subprocess.run(
         ["python3", "-c",
          "import ast;"
-         f"ast.parse(open('{cfg_path}').read());"
-         f"ast.parse(open('{obs_path}').read())"],
+         "ast.parse(open('" + str(cfg_path) + "').read());"
+         "ast.parse(open('" + str(obs_path) + "').read())"],
         capture_output=True, text=True,
     )
     if rc.returncode != 0:
-        print(f"ERROR: syntax check failed:\n{rc.stderr}", file=sys.stderr)
+        print("ERROR: syntax check failed:\n" + rc.stderr, file=sys.stderr)
         return 4
 
     print("[ok] v10d patch applied")
