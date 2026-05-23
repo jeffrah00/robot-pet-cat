@@ -243,6 +243,32 @@ class PhysicsCat:
         # different action distributions; a stale last_action is OOD).
         self._last_active_policy = "walker"
 
+        # ---- v7/FR-Net adapter: foot-geom IDs for predicted_next_contact ---- #
+        # When get_up_policy.obs_dim == 46 the policy expects 4 extra contact
+        # bits appended (FL, FR, RL, RR). At training time those came from a
+        # learned MassContactPredictor; at deployment we substitute the actual
+        # foot-ground contacts from MuJoCo (the predictor was trained to
+        # match those, so this is the limiting case of perfect prediction).
+        # Geom-name lookup is best-effort with several common Go2 naming
+        # variants; if none are found the adapter falls back to a zeros vector
+        # rather than crashing.
+        self._foot_geom_ids: list[int] = []
+        foot_aliases = [
+            ("FL_foot", "FL"), ("FR_foot", "FR"),
+            ("RL_foot", "RL"), ("RR_foot", "RR"),
+        ]
+        for name, short in foot_aliases:
+            gid = -1
+            for cand in (name, name + "_collision", short + "_foot_collision", short):
+                gid = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, cand)
+                if gid >= 0:
+                    break
+            self._foot_geom_ids.append(int(gid))
+        # Build the world-geom id list once (id=0 is typically the floor).
+        # We don't strictly need to filter on it: a foot is "in contact"
+        # whenever it's in any contact, which during normal locomotion is
+        # nearly always with the floor.
+
     # ------------------------------------------------------------------ #
     # KinematicCat-compatible properties
     # ------------------------------------------------------------------ #
@@ -348,7 +374,7 @@ class PhysicsCat:
                     obs = self._build_hind_sit_observation(mj_data)
                     action = self.hind_sit_policy(obs[None, :])[0]
                 elif use_get_up:
-                    obs = self._build_hind_sit_observation(mj_data)
+                    obs = self._build_get_up_observation(mj_data)
                     action = self.get_up_policy(obs[None, :])[0]
                 else:
                     obs = self._build_observation(mj_data, cmd_arr)
@@ -374,6 +400,49 @@ class PhysicsCat:
     # ------------------------------------------------------------------ #
     # Observation construction
     # ------------------------------------------------------------------ #
+
+    def _compute_foot_contacts(self, mj_data) -> np.ndarray:
+        """Return per-foot 0/1 contact state, in FL/FR/RL/RR order.
+
+        Walks mj_data.contact[:ncon] and marks a foot active whenever its
+        cached geom id appears in either side of any contact. If foot geoms
+        weren't found at init time this returns zeros (the policy will see
+        the FR-Net features as 0.0, which is what the predictor outputs in
+        a fully-airborne pose anyway).
+        """
+        out = np.zeros(4, dtype=np.float32)
+        if not any(g >= 0 for g in self._foot_geom_ids):
+            return out
+        ncon = int(mj_data.ncon)
+        for i in range(ncon):
+            c = mj_data.contact[i]
+            g1 = int(c.geom1); g2 = int(c.geom2)
+            for fi, fg in enumerate(self._foot_geom_ids):
+                if fg < 0:
+                    continue
+                if g1 == fg or g2 == fg:
+                    out[fi] = 1.0
+        return out
+
+    def _build_get_up_observation(self, mj_data) -> np.ndarray:
+        """Get_up obs sized to match the loaded policy.
+
+        42-dim policies (v4/v5/v6, no FR-Net) get the same vector as
+        hind_sit. 46-dim policies (v7+ with FR-Net) get an additional 4
+        bits of real foot-ground contact in FL/FR/RL/RR order, standing in
+        for the predicted_next_contact aux observation the policy was
+        trained against.
+        """
+        base = self._build_hind_sit_observation(mj_data)  # 42-dim
+        target_dim = getattr(self.get_up_policy, "obs_dim", 42)
+        if target_dim == 42:
+            return base
+        if target_dim == 46:
+            contacts = self._compute_foot_contacts(mj_data)
+            return np.concatenate([base, contacts]).astype(np.float32)
+        raise RuntimeError(
+            f"get_up policy has unsupported obs_dim={target_dim}; expected 42 or 46"
+        )
 
     def _build_hind_sit_observation(self, mj_data) -> np.ndarray:
         """Build the 42-dim observation expected by the hind_sit policy.

@@ -134,6 +134,7 @@ class _TorchWalkerPolicy:
         self.normalizer_mean = torch.zeros(self.cfg.obs_dim, device=self.device)
         self.normalizer_var = torch.ones(self.cfg.obs_dim, device=self.device)
         self._has_normalizer = False
+        self.obs_dim = int(self.cfg.obs_dim)
 
         self._load_checkpoint(ckpt_path)
 
@@ -236,14 +237,56 @@ def load_hind_sit_policy(
 
 
 
+def _detect_get_up_obs_dim(policy_path) -> int:
+    """Peek at a .pt checkpoint and read its actor input dim.
+
+    Supports both mjlab format (actor_state_dict / mlp.0.weight) and the
+    older SB3-ish format (actor.0.weight). Returns 42 as a safe default
+    for unknown layouts or non-.pt files.
+    """
+    import torch
+    path = Path(policy_path)
+    if path.is_dir():
+        pts = sorted(path.glob("model_*.pt"), key=lambda p: _iter_from_name(p.name), reverse=True)
+        if pts:
+            path = pts[0]
+        else:
+            return 42
+    if path.suffix.lower() not in (".pt", ".pth"):
+        return 42
+    try:
+        blob = torch.load(str(path), map_location="cpu", weights_only=False)
+    except Exception:
+        return 42
+    if isinstance(blob, dict) and "actor_state_dict" in blob:
+        sd = blob["actor_state_dict"]
+    else:
+        sd = blob.get("model_state_dict") if isinstance(blob, dict) else None
+        if sd is None and isinstance(blob, dict):
+            sd = blob
+    if not isinstance(sd, dict):
+        return 42
+    for k in ("mlp.0.weight", "actor.0.weight", "policy.actor.0.weight"):
+        if k in sd:
+            return int(sd[k].shape[1])
+    # Fallback: any *.0.weight 2-D tensor
+    for k, v in sd.items():
+        if k.endswith(".0.weight") and hasattr(v, "ndim") and v.ndim == 2:
+            return int(v.shape[1])
+    return 42
+
+
 def load_get_up_policy(
     policy_path="/workspace/robot-pet-cat/models/get_up_v4c.pt",
     device: str = "cpu",
 ) -> WalkerPolicy:
-    """Load the get_up policy (42-dim obs, no command/phase channels).
-    Defaults to models/get_up_v4c.pt (get_up v4c @ iter 14999).
+    """Load the get_up policy. Auto-detects obs_dim from the checkpoint --
+    v4/v5/v6 are 42-dim (no aux head); v7+ have FR-Net's 4-dim predicted_
+    next_contact appended for 46-dim. PhysicsCat reads policy.obs_dim and
+    builds the matching observation vector at deployment.
     """
-    return _load_policy(policy_path, obs_dim=42, device=device)
+    obs_dim = _detect_get_up_obs_dim(policy_path)
+    return _load_policy(policy_path, obs_dim=obs_dim, device=device)
 def _load_policy(policy_path, obs_dim: int, device: str) -> WalkerPolicy:
     path = Path(policy_path)
     if path.is_dir():
