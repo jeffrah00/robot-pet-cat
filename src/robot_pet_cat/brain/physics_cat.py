@@ -357,10 +357,16 @@ class PhysicsCat:
 
         # When switching between policies, zero last_action: the two heads
         # have different action distributions and feeding the wrong one's
-        # stale output is out-of-distribution.
+        # stale output is out-of-distribution. Additionally, if the
+        # newly-active policy implements .reset() (e.g. ScriptedGetUpPolicy),
+        # call it so any internal phase clock restarts at t=0 on activation.
         if active != self._last_active_policy:
             self._last_action = np.zeros(12, dtype=np.float32)
             self._last_active_policy = active
+            if active == "get_up" and hasattr(self.get_up_policy, "reset"):
+                self.get_up_policy.reset()
+            elif active == "hind_sit" and hasattr(self.hind_sit_policy, "reset"):
+                self.hind_sit_policy.reset()
 
         # Map LocomotionCommand -> 3-dim twist (only used by walker path).
         cmd_arr = self._command_to_twist(cmd)

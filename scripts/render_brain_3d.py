@@ -73,10 +73,9 @@ MOOD_NAMES = [
 
 
 SCRIPTED_SCHEDULE_S = [
-    (0.0,  "walk_to"),    # settle into stand
-    (3.0,  "lie_down"),   # descend to park pose (7.5s ramp)
-    (12.0, "get_up"),     # reverse-ramp back to standing (7.5s)
-    (21.0, "walk_to"),    # walker takes over, drive to target
+    (0.0,  "walk_to"),    # settle into stand (knock-down impulse fires at t=1.0)
+    (2.5,  "get_up"),     # scripted joint-angle keyframe recovery
+    (8.0,  "walk_to"),    # back to walking after recovery
 ]
 
 
@@ -177,6 +176,22 @@ def main() -> int:
         "--no-mode-policy", action="store_true",
         help="Disable mode policy entirely.",
     )
+    p.add_argument(
+        "--scripted-get-up", action="store_true",
+        help="Replace the trained get_up .pt policy with the keyframe-based "
+        "ScriptedGetUpPolicy (deterministic joint-angle ramp).",
+    )
+    p.add_argument(
+        "--get-up-checkpoint",
+        default="models/get_up_v7_4300.pt",
+        help="Path to the trained get_up policy. Ignored when "
+        "--scripted-get-up is set.",
+    )
+    p.add_argument(
+        "--knock-down", action="store_true",
+        help="At sim t=1.0s, apply an angular impulse to roll the cat onto "
+        "its side so the scripted get_up has something to recover from.",
+    )
     args = p.parse_args()
 
     # Lazy imports so --help doesn't pull mujoco.
@@ -223,6 +238,15 @@ def main() -> int:
             init_mode = Attractor.EXPLORING
         mode_policy = ModePolicy(ModePolicyConfig(initial_mode=init_mode))
 
+    # Resolve get_up policy: scripted callable or trained checkpoint.
+    if args.scripted_get_up:
+        from robot_pet_cat.brain.scripted_get_up import ScriptedGetUpPolicy
+        get_up_obj = ScriptedGetUpPolicy()
+        _log("using ScriptedGetUpPolicy (keyframe joint-angle sequence)")
+    else:
+        get_up_obj = Path(args.get_up_checkpoint)
+        _log(f"using trained get_up policy: {get_up_obj}")
+
     cfg = BrainEnvConfig(
         use_physics_cat=True,
         walker_policy_path=Path(args.policy),
@@ -232,7 +256,7 @@ def main() -> int:
         decision_period_min_steps=40,
         decision_period_max_steps=120,
         hind_sit_policy_path=Path("models/hind_sit_v1.pt"),
-        get_up_policy_path=Path("models/get_up_v7_4300.pt"),
+        get_up_policy_path=get_up_obj,
     )
     _log("building BrainEnv with PhysicsCat (this loads the walker)...")
     t0 = time.perf_counter()
@@ -267,8 +291,20 @@ def main() -> int:
 
     # --- Roll out + render --------------------------------------------- #
     _log(f"rolling out {args.steps} steps -> {out_path}")
+    knock_done = False
     t_loop = time.perf_counter()
     for step in range(args.steps):
+        # Optional knock-down: apply an angular impulse near sim t=1.0s so
+        # the scripted get_up has something to recover from. The scripted
+        # action schedule picks up "get_up" at t=2.5s and fires GetUp ->
+        # gait="get_up" -> ScriptedGetUpPolicy in PhysicsCat.
+        if args.knock_down and not knock_done and env.t_sim >= 1.0:
+            vadr = env.cat._base_qvel_adr
+            env.mj_data.qvel[vadr + 0] = 0.5   # small forward push
+            env.mj_data.qvel[vadr + 2] = 1.2   # small upward kick
+            env.mj_data.qvel[vadr + 3] = 12.0  # roll rate about body +x
+            knock_done = True
+            _log(f"  knocked cat down at t={env.t_sim:.2f}s")
         if ppo_model is not None:
             flat_obs = obs_dict_to_curiosity_vec(obs)
             action, _ = ppo_model.predict(flat_obs, deterministic=False)
