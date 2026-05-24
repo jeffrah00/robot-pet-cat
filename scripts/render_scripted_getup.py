@@ -62,6 +62,10 @@ def main() -> int:
                    help="Sim time at which to apply the knock-down impulse.")
     p.add_argument("--get-up-at", type=float, default=2.5,
                    help="Sim time at which to switch to gait='get_up'.")
+    p.add_argument("--start-prone", action="store_true",
+                   help="Initialize cat belly-down (chassis at z=0.06, legs "
+                        "tucked PRONE) and skip the knock-down. The scripted "
+                        "get_up policy then ramps it back to standing.")
     args = p.parse_args()
 
     # Lazy imports
@@ -91,6 +95,29 @@ def main() -> int:
     env.reset()
     _log(f"  built in {time.perf_counter()-t0:.1f}s, xy={env.cat.xy} z={env.cat.body_height:.3f}")
 
+    if args.start_prone:
+        # Override the post-reset pose to belly-down. Chassis just above the
+        # floor; joints in PRONE (hips splayed 0.30, thighs forward 1.50,
+        # calves fully folded -2.60) so feet sit at chassis level beside hips.
+        PRONE_JOINT_POS = np.array([
+            -0.30, 1.50, -2.60,   # FL
+            +0.30, 1.50, -2.60,   # FR
+            -0.30, 1.50, -2.60,   # RL
+            +0.30, 1.50, -2.60,   # RR
+        ], dtype=np.float32)
+        cat = env.cat
+        mj_data = env.mj_data
+        mj_data.qpos[cat._base_qpos_adr + 2] = 0.06
+        for i in range(12):
+            mj_data.qpos[cat._joint_qpos_adr[i]] = float(PRONE_JOINT_POS[i])
+        mj_data.qvel[:] = 0.0
+        # Pre-load actuators with the prone targets so PD doesn't fight at t=0.
+        for i in range(12):
+            mj_data.ctrl[cat._actuator_ids[i]] = float(PRONE_JOINT_POS[i])
+        mujoco.mj_forward(env.mj_model, mj_data)
+        cat._refresh_pose_cache(mj_data)
+        _log(f"  start-prone: cat at z={cat.body_height:.3f}, knock-down disabled")
+
     _log(f"creating renderer {args.width}x{args.height}")
     renderer = mujoco.Renderer(env.mj_model, width=args.width, height=args.height)
 
@@ -118,13 +145,16 @@ def main() -> int:
     dt = env.cfg.dt_s
 
     knocked = False
-    switched = False
+    # --start-prone fires get_up immediately and skips the knock-down.
+    switched = bool(args.start_prone)
+    if switched:
+        _log(f"  starting in gait='get_up' (start-prone mode)")
     t_loop = time.perf_counter()
     for step in range(args.steps):
         t_sim = step * dt
 
-        # Knock-down impulse
-        if not knocked and t_sim >= args.knock_at:
+        # Knock-down impulse (disabled in --start-prone mode)
+        if (not args.start_prone) and (not knocked) and t_sim >= args.knock_at:
             vadr = cat._base_qvel_adr
             mj_data.qvel[vadr + 0] = 0.5
             mj_data.qvel[vadr + 2] = 1.2

@@ -29,18 +29,32 @@ last_action when switching to get_up; we also expose .reset() and rely on
 PhysicsCat calling it on activation so the phase restarts at t=0 each time
 the skill fires.
 
-Keyframe design (recovery from arbitrary fallen pose):
-  t=0.0..0.30s  drive all joints to "tuck": hip abduction 0, thighs forward
-                (1.4 rad), calves deeply folded (-2.6 rad). Pulls feet in
-                under the body so the COM sits over the contact patch.
-  t=0.30..0.80  hold the tuck. PD damping settles the body; if the cat is
-                on its side, the curled legs act like a fulcrum.
-  t=0.80..1.60  push to standing: hip back to default abduction (+/-0.10),
-                thighs back to 0.9, calves to -1.8. The extension torques
-                lever the body upright.
-  t>=1.60s      hold standing default forever.
+Keyframe design (recovery from belly-down prone pose):
+  We assume the cat is on its belly (chassis on the floor at z~0.05),
+  oriented right-side-up. This is a feedback-free open-loop recovery:
+  joint targets alone cannot reorient the body, but they CAN push the
+  chassis up off the floor if the legs are loaded against the ground
+  symmetrically.
 
-Anything past 1.6s is just "stay at default", which equals action=0.
+  t=0.0..0.4s   hold PRONE: hip splayed wide (~0.30), thighs heavily
+                rotated forward (1.5 rad), calves deeply folded (-2.6).
+                This positions feet at the chassis level, beside/below
+                the hips, with knees tucked up. PD damps initial motion.
+  t=0.4..1.8s   ramp to PRESS: knees straighten (calf -2.6 -> -1.4),
+                thighs rotate back from forward (1.5 -> 0.7), hips come
+                in slightly (0.30 -> 0.15). The straightening knees push
+                the feet DOWN against the floor, lifting the chassis UP.
+                Slow ramp (1.4s) keeps PD torques moderate; rate limit
+                caps per-step delta.
+  t=1.8..2.8s   settle into STAND: hip 0.10, thigh 0.90, calf -1.80.
+  t>=2.8s       hold standing default forever.
+
+The key physical idea: starting at PRONE with feet planted, gradually
+straightening the knees while rotating the thighs back applies an
+upward force at the foot contacts that lifts the chassis. This only
+works if the body starts roughly belly-down (axis aligned with world
+up). Side-lying or upside-down recovery requires closed-loop logic
+that this script does NOT have.
 """
 
 from __future__ import annotations
@@ -70,19 +84,25 @@ def _pose(hip_abd: float, thigh: float, calf: float) -> np.ndarray:
 
 # Standing default (matches GO2_DEFAULT_JOINT_POS).
 _STAND = _pose(0.10, 0.90, -1.80)
-# Tuck: hips straight, thighs pulled forward, calves curled.
-_TUCK = _pose(0.00, 1.40, -2.60)
+# Prone: belly-down, legs splayed wide, knees fully folded so feet sit
+# at the chassis level beside the hips. This is the assumed starting
+# pose -- the render script should initialize the cat in this config.
+_PRONE = _pose(0.30, 1.50, -2.60)
+# Press: knees significantly extended, thighs rotated back toward
+# standing, hips coming inward. Driving from PRONE to PRESS with feet
+# planted produces an upward push at the foot contacts.
+_PRESS = _pose(0.15, 0.70, -1.40)
 
 
-# Keyframe schedule: (time_s, target_pose).
-# The policy linearly interpolates between consecutive keyframes; before
-# the first keyframe it holds keyframe[0]; after the last it holds keyframe[-1].
+# Keyframe schedule: (time_s, target_pose). Linear interpolation
+# between consecutive keyframes; before the first it holds
+# keyframe[0], after the last it holds keyframe[-1].
 KEYFRAMES: list[tuple[float, np.ndarray]] = [
-    (0.00, _STAND),   # match initial pose to avoid a discontinuity
-    (0.10, _TUCK),    # quick pull to tuck
-    (0.80, _TUCK),    # hold tuck briefly
-    (1.60, _STAND),   # push up to standing
-    (3.00, _STAND),   # hold standing
+    (0.00, _PRONE),   # match prone init pose, no PD discontinuity
+    (0.40, _PRONE),   # hold briefly so settling damps any init motion
+    (1.80, _PRESS),   # slow ramp lifts the chassis off the floor
+    (2.80, _STAND),   # settle into normal standing pose
+    (8.00, _STAND),   # hold
 ]
 
 
@@ -121,9 +141,14 @@ class ScriptedGetUpPolicy:
 
     # --- PhysicsCat-facing reset hook ----------------------------------- #
     def reset(self) -> None:
-        """Reset the phase clock. Called by PhysicsCat when get_up activates."""
+        """Reset the phase clock. Called by PhysicsCat when get_up activates.
+
+        _prev_target is seeded with the first keyframe's pose so the
+        rate-limiter doesn't clip the t=0 output (we want to emit the first
+        keyframe exactly on the first call -- the upstream caller should have
+        already initialized joint positions to match that pose)."""
         self._t = 0.0
-        self._prev_target = self._default.copy()
+        self._prev_target = self._keyframes[0][1].copy()
 
     # --- Keyframe interpolation ----------------------------------------- #
     def _target_at(self, t: float) -> np.ndarray:
