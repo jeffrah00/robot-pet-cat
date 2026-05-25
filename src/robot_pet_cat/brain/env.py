@@ -128,37 +128,17 @@ def _nearest_entity(scene_state: SceneState, cat_xy, **flag_filter):
 
 
 def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarray):
-    """Choose a sensible goal for a skill from scene + cat position."""
-    from robot_pet_cat.skills.look_at import LookAtGoal
-    from robot_pet_cat.skills.stretch import StretchGoal
-    from robot_pet_cat.skills.walk_to import WalkToGoal
+    """Choose a sensible goal for a skill from scene + cat position.
 
-    if skill_name in ("sit", "lie_down", "crouch", "get_up",
-                       "stand", "walk", "prowl", "trot",
-                       "back_up", "turn_in_place", "hind_sit"):
+    2026-05-25: post-Go1 pivot, every skill in the canonical 6-skill set is
+    either a static posture (crouch, lie_belly, lie_side, get_up) or pure
+    velocity locomotion (walk_normal, walk_slow). None of them need an
+    xy target or a per-entity goal — None is the right answer for all.
+    """
+    del scene_state, cat_xy  # unused after pivot
+    if skill_name in ("get_up", "walk_normal", "walk_slow",
+                       "crouch", "lie_belly", "lie_side"):
         return None
-    if skill_name == "stretch":
-        return StretchGoal(duration_s=2.0)
-    play = _nearest_entity(scene_state, cat_xy, play_target=True)
-    elev = _nearest_entity(scene_state, cat_xy, elevated=True)
-    if skill_name == "walk_to":
-        if play is not None:
-            return WalkToGoal(target_xy=(float(play.pos_xyz[0]), float(play.pos_xyz[1])))
-        return WalkToGoal(target_xy=(0.0, 0.0))
-    if skill_name == "look_at":
-        if play is not None:
-            return LookAtGoal(point_xyz=tuple(float(v) for v in play.pos_xyz))
-        return LookAtGoal(point_xyz=(1.0, 0.0, 0.3))
-    if skill_name == "jump_to":
-        from robot_pet_cat.skills.jump_to import JumpToGoal
-        if elev is not None:
-            return JumpToGoal(surface_xyz=tuple(float(v) for v in elev.pos_xyz))
-        return None
-    if skill_name == "swat":
-        from robot_pet_cat.skills.swat import SwatGoal
-        if play is not None:
-            return SwatGoal(point_xyz=tuple(float(v) for v in play.pos_xyz))
-        return SwatGoal(point_xyz=(1.0, 0.0, 0.3))
     raise KeyError(f"no default goal recipe for skill {skill_name!r}")
 
 

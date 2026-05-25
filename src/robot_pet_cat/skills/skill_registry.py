@@ -41,46 +41,33 @@ from .get_up import GetUp
 def _build_skills() -> dict[str, Skill]:
     """Instantiate the canonical skill set. Stateful skills get exactly one
     instance shared across decision ticks; the brain is responsible for
-    `.reset()` on transitions."""
+    `.reset()` on transitions.
+
+    2026-05-25: project pivoted to Go1 + mjlab_playground recipes. The
+    canonical skill set is now exactly six entries. The existing skill
+    classes (Walk, Prowl, Crouch, LieDown, GetUp) are reused as visual
+    proxies; the actual trained mjlab_playground policies are loaded
+    separately by integration code, not by this registry.
+    """
     return {
-        "walk_to": WalkTo(),
-        "sit": Sit(),
-        "lie_down": LieDown(),
-        "stretch": Stretch(),
-        "crouch": Crouch(),
-        "look_at": LookAt(),
-        "swat": Swat(),
-        "hind_sit": HindSit(),
         "get_up": GetUp(),
-        # Velocity-command locomotion skills
-        "stand": Stand(),
-        "walk": Walk(),
-        "prowl": Prowl(),
-        "trot": Trot(),
-        "back_up": BackUp(),
-        "turn_in_place": TurnInPlace(),
+        "walk_normal": Walk(),    # forward velocity ~1.0 m/s
+        "walk_slow": Prowl(),      # slow forward velocity
+        "crouch": Crouch(),
+        "lie_belly": LieDown(),    # two LieDown() instances on purpose:
+        "lie_side": LieDown(),     # the brain treats them as distinct skills
     }
 
 
 # Stable insertion order — DON'T reorder; brain checkpoints encode integer
 # indices that map back through SKILL_NAMES. New skills append to the end.
 SKILL_NAMES: tuple[str, ...] = (
-    "walk_to",
-    "sit",
-    "lie_down",
-    "stretch",
-    "crouch",
-    "look_at",
-    "swat",
-    "hind_sit",
     "get_up",
-    # Velocity-command locomotion skills
-    "stand",
-    "walk",
-    "prowl",
-    "trot",
-    "back_up",
-    "turn_in_place",
+    "walk_normal",
+    "walk_slow",
+    "crouch",
+    "lie_belly",
+    "lie_side",
 )
 
 SKILL_INDEX: dict[str, int] = {name: i for i, name in enumerate(SKILL_NAMES)}

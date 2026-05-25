@@ -73,9 +73,15 @@ MOOD_NAMES = [
 
 
 SCRIPTED_SCHEDULE_S = [
-    (0.0,  "walk_to"),    # settle into stand (knock-down impulse fires at t=1.0)
-    (2.5,  "get_up"),     # scripted joint-angle keyframe recovery
-    (8.0,  "walk_to"),    # back to walking after recovery
+    # 2026-05-25 post-Go1 pivot: cycle through the canonical 6-skill set.
+    # Skill name appears in HUD; underlying locomotion is the Go2 walker.
+    (0.0,  "walk_normal"),   # settle into active walk (knock-down impulse at t=1.0)
+    (3.0,  "get_up"),         # recovery
+    (6.0,  "walk_slow"),      # gentle locomotion
+    (9.0,  "crouch"),          # alert low posture
+    (12.0, "lie_belly"),       # rest on belly
+    (15.0, "lie_side"),        # rest on side
+    (18.0, "walk_normal"),     # back to active
 ]
 
 

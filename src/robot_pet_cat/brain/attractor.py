@@ -73,50 +73,44 @@ class Attractor(str, Enum):
 # MODE_HARD_BLOCKED (below) still denies locomotion during rest/groom even
 # when soft-pass would let it through.
 MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
-    # Settled, low energy. Postural skills + recovery + visual attention.
+    # 2026-05-25 redistribution: project pivoted to Go1 + mjlab_playground.
+    # The only skills we have now are the 6 trained on top of the
+    # mjlab_playground recipes (see [[project_pivot_to_go1]]). get_up is
+    # universal across modes as the recovery skill.
+    #
+    # Settled, low energy. Lying poses + low alert + recovery.
     Attractor.RESTING:   (
-        "sit", "lie_down", "stretch", "hind_sit",
-        "look_at", "stand", "get_up",
+        "lie_belly", "lie_side", "crouch", "get_up",
     ),
-    # Alert but not pursuing. Look around, change vantage, sit up to see.
+    # Alert but not pursuing. Stationary low watch + slow approach + recovery.
     Attractor.OBSERVING: (
-        "look_at", "sit", "hind_sit", "stretch",
-        "turn_in_place", "walk_to",
-        "stand", "get_up",
+        "crouch", "walk_slow", "get_up",
     ),
-    # Pre-pounce, locked on something. Crouch, slow stalk, prowl.
+    # Pre-pounce, locked on something. Low ready pose + slow creep.
     Attractor.STALKING:  (
-        "crouch", "prowl", "walk", "walk_to",
-        "look_at", "turn_in_place",
-        "stand", "get_up",
+        "crouch", "walk_slow", "get_up",
     ),
-    # Active engagement with a play target. Swat, chase, dart around.
+    # Active engagement with a play target. Brisk locomotion + slow stalking.
     Attractor.PLAYING:   (
-        "swat", "walk", "trot", "walk_to",
-        "turn_in_place", "back_up", "prowl",
-        "look_at", "stand", "get_up",
+        "walk_normal", "walk_slow", "get_up",
     ),
-    # Static / quiet self-care. Same shape as resting; mood distinguishes.
+    # Static / quiet self-care. Mirrors resting; mood distinguishes.
     Attractor.GROOMING:  (
-        "sit", "lie_down", "stretch", "hind_sit",
-        "look_at", "stand", "get_up",
+        "lie_belly", "lie_side", "crouch", "get_up",
     ),
     # Locomotion-dominant, low-engagement wandering.
     Attractor.EXPLORING: (
-        "walk", "trot", "walk_to", "turn_in_place", "back_up",
-        "stretch",
-        "look_at", "stand", "get_up",
+        "walk_normal", "walk_slow", "get_up",
     ),
 }
 
 # Skills that must NEVER execute in a mode, even when the mode_soft_pass coin
 # flip in BrainEnv would normally let them through. Locomotion skills break the
 # semantic contract of resting/grooming modes too severely to allow even
-# occasionally. Other modes keep the default soft-pass behavior (stochastic
-# cat character per the cats-are-stochastic design memory).
+# occasionally.
 MODE_HARD_BLOCKED: dict[Attractor, frozenset[str]] = {
-    Attractor.RESTING:  frozenset({"walk_to", "jump_to"}),
-    Attractor.GROOMING: frozenset({"walk_to", "jump_to"}),
+    Attractor.RESTING:  frozenset({"walk_normal", "walk_slow"}),
+    Attractor.GROOMING: frozenset({"walk_normal", "walk_slow"}),
 }
 
 
