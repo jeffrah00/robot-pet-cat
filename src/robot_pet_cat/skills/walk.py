@@ -1,10 +1,11 @@
+"""walk -- forward locomotion via mjlab Go1 walker (normal)."""
 from __future__ import annotations
 from typing import Any
 from .skill_policy import LocomotionCommand, Skill
 
 
 class Walk(Skill):
-    """Forward locomotion at a moderate walking speed (vx = 0.5 m/s)."""
+    """Forward walking; dispatched via gait='walk'."""
 
     name: str = "walk"
 

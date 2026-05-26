@@ -139,6 +139,10 @@ class PhysicsCat:
         cfg: Optional[PhysicsCatConfig] = None,
         hind_sit_policy: "WalkerPolicy | str | Path | None" = None,
         get_up_policy: "WalkerPolicy | str | Path | None" = None,
+        walker_slow_policy: "WalkerPolicy | str | Path | None" = None,
+        crouch_policy: "WalkerPolicy | str | Path | None" = None,
+        lie_belly_policy: "WalkerPolicy | str | Path | None" = None,
+        lie_side_policy: "WalkerPolicy | str | Path | None" = None,
     ) -> None:
         import mujoco
 
@@ -172,6 +176,27 @@ class PhysicsCat:
             self.get_up_policy = get_up_policy
         else:
             self.get_up_policy = load_get_up_policy(get_up_policy)
+
+        # Optional slow walker: 48-dim like the normal walker but trained
+        # with a slower command range (Mjlab-Velocity-Slow-Unitree-Go1).
+        if walker_slow_policy is None:
+            self.walker_slow_policy = None
+        elif callable(walker_slow_policy):
+            self.walker_slow_policy = walker_slow_policy
+        else:
+            self.walker_slow_policy = load_go1_walker_policy(walker_slow_policy)
+
+        # Posture policies: 42-dim, same FR/FL/RR/RL MJCF joint order as
+        # get_up, same action_scale=0.6 and settle_steps=25. Forks of the
+        # getup task with different reward targets (mjlab_playground
+        # _extra_tasks.py: Mjlab-{Crouch,LieBelly,LieSide}-Flat-Unitree-Go1).
+        def _maybe_load_posture(p):
+            if p is None: return None
+            if callable(p): return p
+            return load_get_up_policy(p)
+        self.crouch_policy = _maybe_load_posture(crouch_policy)
+        self.lie_belly_policy = _maybe_load_posture(lie_belly_policy)
+        self.lie_side_policy = _maybe_load_posture(lie_side_policy)
         # ---- Index lookups against the compiled MuJoCo model ----------- #
         # Base body and its free-joint qpos/qvel offsets.
         base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, GO1_BASE_BODY)
@@ -354,10 +379,27 @@ class PhysicsCat:
         """
         mujoco = self._mujoco
 
-        # Determine which policy is active this tick.
+        # Determine which policy is active this tick. Posture policies
+        # (get_up/crouch/lie_belly/lie_side/hind_sit) are 42-dim and share
+        # the get_up dispatch path (8Hz settle, scale=0.6, perm to phys order).
+        # Walker policies (normal + slow) are 48-dim, decimation=4 (50Hz).
+        posture_policies = {
+            "hind_sit": self.hind_sit_policy,
+            "get_up": self.get_up_policy,
+            "crouch": self.crouch_policy,
+            "lie_belly": self.lie_belly_policy,
+            "lie_side": self.lie_side_policy,
+        }
+        use_posture = (
+            cmd.gait in posture_policies and posture_policies[cmd.gait] is not None
+        )
+        use_slow_walker = (
+            cmd.gait == "walk_slow" and self.walker_slow_policy is not None
+        )
+        # Back-compat names used downstream.
         use_hind_sit = (cmd.gait == "hind_sit") and (self.hind_sit_policy is not None)
-        use_get_up = (cmd.gait == "get_up") and (self.get_up_policy is not None)
-        active = "hind_sit" if use_hind_sit else ("get_up" if use_get_up else "walker")
+        use_get_up = use_posture  # all posture policies follow the get_up dispatch shape
+        active = cmd.gait if use_posture else ("walker_slow" if use_slow_walker else "walker")
 
         # When switching between policies, zero last_action: the two heads
         # have different action distributions and feeding the wrong one's
@@ -367,14 +409,13 @@ class PhysicsCat:
         if active != self._last_active_policy:
             self._last_action = np.zeros(12, dtype=np.float32)
             self._last_active_policy = active
-            if active == "get_up":
-                self._get_up_substep_counter = 0  # restart settle clock
-                for _i in range(12):  # zero actuator targets for clean get_up handoff
+            if active in posture_policies:
+                self._get_up_substep_counter = 0  # restart settle clock (shared)
+                for _i in range(12):  # zero actuator targets for clean handoff
                     mj_data.ctrl[self._actuator_ids[_i]] = 0.0
-                if hasattr(self.get_up_policy, "reset"):
-                    self.get_up_policy.reset()
-            elif active == "hind_sit" and hasattr(self.hind_sit_policy, "reset"):
-                self.hind_sit_policy.reset()
+                _newp = posture_policies[active]
+                if _newp is not None and hasattr(_newp, "reset"):
+                    _newp.reset()
 
         # Map LocomotionCommand -> 3-dim twist (only used by walker path).
         cmd_arr = self._command_to_twist(cmd)
@@ -391,12 +432,13 @@ class PhysicsCat:
             else:
                 query = (substep % self.cfg.decimation == 0)
             if query:
-                if use_hind_sit:
-                    obs = self._build_hind_sit_observation(mj_data)
-                    action = self.hind_sit_policy(obs[None, :])[0]
-                elif use_get_up:
-                    obs = self._build_get_up_observation(mj_data)
-                    action = self.get_up_policy(obs[None, :])[0]
+                if use_posture:
+                    # All posture policies use the 42/46-dim get_up obs shape.
+                    obs = self._build_posture_observation(mj_data, posture_policies[active])
+                    action = posture_policies[active](obs[None, :])[0]
+                elif use_slow_walker:
+                    obs = self._build_observation(mj_data, cmd_arr)
+                    action = self.walker_slow_policy(obs[None, :])[0]
                 else:
                     obs = self._build_observation(mj_data, cmd_arr)
                     action = self.policy(obs[None, :])[0]
@@ -404,10 +446,11 @@ class PhysicsCat:
                 # If cmd.joint_targets is set, bypass policy (manual PD skills).
                 if cmd.joint_targets is not None:
                     targets = np.asarray(cmd.joint_targets, dtype=np.float32)
-                elif use_get_up:
-                    # go1_getup: base=zeros (Go1 default), scale=0.6
-                    # Permute action from Go1 MJCF order to PhysicsCat phys order
-                    _GO1_PERM = (3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8)
+                elif use_posture:
+                    # 42-dim posture policies (get_up + crouch/lie_belly/
+                    # lie_side derived from it): base=zeros, scale=0.6,
+                    # permute MJCF -> phys.
+                    _GO1_PERM = self._GO1_TO_PHYS_PERM
                     targets = np.zeros(12, dtype=np.float32)
                     for _k in range(12):
                         targets[_GO1_PERM[_k]] = 0.6 * self._last_action[_k]
@@ -429,7 +472,7 @@ class PhysicsCat:
                         )
                 for i in range(12):
                     mj_data.ctrl[self._actuator_ids[i]] = float(targets[i])
-            if use_get_up:
+            if use_posture:
                 self._get_up_substep_counter += 1
 
             mujoco.mj_step(self.mj_model, mj_data)
@@ -470,8 +513,24 @@ class PhysicsCat:
                     out[fi] = 1.0
         return out
 
+    def _build_posture_observation(self, mj_data, policy) -> np.ndarray:
+        """Posture obs sized to the target policy's obs_dim. All 5 posture
+        heads (get_up, crouch, lie_belly, lie_side, hind_sit) were trained
+        on the same 42-dim Go1 MJCF-order shape; v7+ get_up adds a 4-dim
+        FR-Net predicted_next_contact tail to make 46."""
+        base = self._build_go1_getup_observation(mj_data)
+        target_dim = getattr(policy, "obs_dim", 42)
+        if target_dim == 42:
+            return base
+        if target_dim == 46:
+            contacts = self._compute_foot_contacts(mj_data)
+            return np.concatenate([base, contacts]).astype(np.float32)
+        raise RuntimeError(
+            f"posture policy has unsupported obs_dim={target_dim}; expected 42 or 46"
+        )
+
     def _build_get_up_observation(self, mj_data) -> np.ndarray:
-        """Get_up obs sized to match the loaded policy (Go1 MJCF joint order)."""
+        """Backwards-compatible wrapper."""
         base = self._build_go1_getup_observation(mj_data)  # 42-dim, Go1 MJCF order
         target_dim = getattr(self.get_up_policy, "obs_dim", 42)
         if target_dim == 42:

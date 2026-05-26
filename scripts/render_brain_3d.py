@@ -162,8 +162,9 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument(
         "--policy",
-        required=True,
-        help="Path to the Go2 walker policy (.onnx, .pt, or run dir).",
+        default="models/mjlab_go1_walker_normal.pt",
+        help="Path to the Go1 normal walker policy. Default is the mjlab "
+        "Velocity-Flat-Unitree-Go1 checkpoint.",
     )
     p.add_argument(
         "--checkpoint",
@@ -205,6 +206,26 @@ def main() -> int:
         default="models/mjlab_go1_getup.pt",
         help="Path to the trained get_up policy. Ignored when "
         "--scripted-get-up is set.",
+    )
+    p.add_argument(
+        "--walker-slow-checkpoint",
+        default="models/mjlab_go1_walker_slow.pt",
+        help="Slow-walker policy (Mjlab-Velocity-Slow-Unitree-Go1).",
+    )
+    p.add_argument(
+        "--crouch-checkpoint",
+        default="models/mjlab_go1_crouch.pt",
+        help="Mjlab-Crouch-Flat-Unitree-Go1 checkpoint.",
+    )
+    p.add_argument(
+        "--lie-belly-checkpoint",
+        default="models/mjlab_go1_lie_belly.pt",
+        help="Mjlab-LieBelly-Flat-Unitree-Go1 checkpoint.",
+    )
+    p.add_argument(
+        "--lie-side-checkpoint",
+        default="models/mjlab_go1_lie_side.pt",
+        help="Mjlab-LieSide-Flat-Unitree-Go1 checkpoint.",
     )
     p.add_argument(
         "--knock-down", action="store_true",
@@ -276,6 +297,10 @@ def main() -> int:
         decision_period_max_steps=120,
         hind_sit_policy_path=Path("models/hind_sit_v1.pt"),
         get_up_policy_path=get_up_obj,
+        walker_slow_policy_path=Path(args.walker_slow_checkpoint),
+        crouch_policy_path=Path(args.crouch_checkpoint),
+        lie_belly_policy_path=Path(args.lie_belly_checkpoint),
+        lie_side_policy_path=Path(args.lie_side_checkpoint),
     )
     _log("building BrainEnv with PhysicsCat (this loads the walker)...")
     t0 = time.perf_counter()

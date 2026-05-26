@@ -211,6 +211,11 @@ class BrainEnvConfig:
     # Paths to optional specialty policies (42-dim obs, no command/phase).
     hind_sit_policy_path: Optional[Path] = None
     get_up_policy_path: Optional[Path] = None
+    # Additional mjlab Go1 checkpoints (all derived from Mjlab-*-Flat-Unitree-Go1).
+    walker_slow_policy_path: Optional[Path] = None
+    crouch_policy_path: Optional[Path] = None
+    lie_belly_policy_path: Optional[Path] = None
+    lie_side_policy_path: Optional[Path] = None
     # Spawn height for the Go2 base body at reset. 0.32 matches the
     # init_state z in unitree_rl_mjlab's training config.
     physics_spawn_z: float = 0.32
@@ -262,6 +267,10 @@ class BrainEnv:
                 PhysicsCatConfig(spawn_z=self.cfg.physics_spawn_z),
                 hind_sit_policy=self.cfg.hind_sit_policy_path,
                 get_up_policy=self.cfg.get_up_policy_path,
+                walker_slow_policy=self.cfg.walker_slow_policy_path,
+                crouch_policy=self.cfg.crouch_policy_path,
+                lie_belly_policy=self.cfg.lie_belly_policy_path,
+                lie_side_policy=self.cfg.lie_side_policy_path,
             )
         else:
             self.mj_model = mujoco.MjModel.from_xml_path(str(self.cfg.scene_xml))
