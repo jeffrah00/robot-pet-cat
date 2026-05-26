@@ -202,7 +202,7 @@ def main() -> int:
     )
     p.add_argument(
         "--get-up-checkpoint",
-        default="models/get_up_v7_4300.pt",
+        default="models/mjlab_go1_getup.pt",
         help="Path to the trained get_up policy. Ignored when "
         "--scripted-get-up is set.",
     )
