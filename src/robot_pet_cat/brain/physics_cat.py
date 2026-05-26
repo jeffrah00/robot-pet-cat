@@ -412,7 +412,21 @@ class PhysicsCat:
                     for _k in range(12):
                         targets[_GO1_PERM[_k]] = 0.6 * self._last_action[_k]
                 else:
-                    targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
+                    # Walker policy returns actions in Go1 MJCF order
+                    # (FR,FL,RR,RL); PhysicsCat actuator_ids are in
+                    # GO2_JOINT_NAMES order (FL,FR,RL,RR). Permute action
+                    # *and* default offsets so the per-leg targets land on
+                    # the right actuators. (Same fix the get_up branch got
+                    # in commits 31ad1954 + 0b278766; the walker path had
+                    # been silently writing MJCF-order actions into
+                    # phys-order actuators, swapping every L/R pair.)
+                    _GO1_PERM = self._GO1_TO_PHYS_PERM
+                    targets = np.zeros(12, dtype=np.float32)
+                    for _k in range(12):
+                        targets[_GO1_PERM[_k]] = (
+                            GO2_DEFAULT_JOINT_POS[_GO1_PERM[_k]]
+                            + self.cfg.action_scale * self._last_action[_k]
+                        )
                 for i in range(12):
                     mj_data.ctrl[self._actuator_ids[i]] = float(targets[i])
             if use_get_up:
@@ -552,6 +566,13 @@ class PhysicsCat:
 
         Layout: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)
                 +joint_pos(12)+joint_vel(12)+action(12) = 48
+
+        Joint dims (joint_pos, joint_vel, last_action) are emitted in Go1
+        MJCF order (FR,FL,RR,RL) — what mjlab iterated when training the
+        walker. PhysicsCat looks up indices in GO2_JOINT_NAMES order
+        (FL,FR,RL,RR), so _GO1_TO_PHYS_PERM is applied at read time. The
+        action-application path is the inverse permutation; see the
+        walker branch of step().
         """
         # 1. base_lin_vel (3) -- root translational velocity in body frame.
         # qvel[0:3] is world-frame linear velocity of the free joint.
@@ -567,21 +588,23 @@ class PhysicsCat:
         # 4. command (3): the velocity twist [vx, vy, yaw_rate].
         command = cmd_arr
 
-        # 5. joint_pos (12): q - q_default
+        # 5. joint_pos (12): q - q_default, in Go1 MJCF order.
+        p = self._GO1_TO_PHYS_PERM
         qpos = mj_data.qpos
         joint_pos = np.array(
-            [qpos[self._joint_qpos_adr[i]] - GO2_DEFAULT_JOINT_POS[i] for i in range(12)],
+            [qpos[self._joint_qpos_adr[p[i]]] - GO2_DEFAULT_JOINT_POS[p[i]]
+             for i in range(12)],
             dtype=np.float32,
         )
 
-        # 6. joint_vel (12)
+        # 6. joint_vel (12), in Go1 MJCF order.
         qvel = mj_data.qvel
         joint_vel = np.array(
-            [qvel[self._joint_qvel_adr[i]] for i in range(12)],
+            [qvel[self._joint_qvel_adr[p[i]]] for i in range(12)],
             dtype=np.float32,
         )
 
-        # 7. last_action (12)
+        # 7. last_action (12), already in Go1 MJCF order (raw policy output).
         last_action = self._last_action
 
         # 48-dim: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)+joint_pos(12)+joint_vel(12)+action(12)
@@ -664,40 +687,4 @@ class PhysicsCat:
         adr = self._base_qpos_adr
         vadr = self._base_qvel_adr
 
-        cur_x = float(mj_data.qpos[adr + 0])
-        cur_y = float(mj_data.qpos[adr + 1])
-        cur_z = float(mj_data.qpos[adr + 2])
-
-        tx, ty, tz = target_xyz
-        dz = max(0.0, tz - cur_z) + 0.08  # 8 cm clearance above platform
-        # Cap dz to prevent runaway vz if cur_z is weird (e.g. physics instability).
-        dz = min(dz, 0.5)  # max 50 cm effective rise -- gives vz ~ 3.1 m/s max
-        vz = math.sqrt(2.0 * g * dz)
-        t_peak = vz / g
-        t_land = 2.0 * t_peak  # approximate total time of flight
-
-        dx, dy = tx - cur_x, ty - cur_y
-        d_xy = math.hypot(dx, dy)
-        if d_xy > 1e-3:
-            vx = dx / max(t_land, 0.01)
-            vy = dy / max(t_land, 0.01)
-        else:
-            vx, vy = 0.0, 0.0
-
-        mj_data.qvel[vadr + 0] = vx
-        mj_data.qvel[vadr + 1] = vy
-        mj_data.qvel[vadr + 2] = vz
-        # Zero angular velocity for a clean arc.
-        mj_data.qvel[vadr + 3] = 0.0
-        mj_data.qvel[vadr + 4] = 0.0
-        mj_data.qvel[vadr + 5] = 0.0
-
-    def _sensor_adr(self, name: str, required: bool = True) -> int:
-        mujoco = self._mujoco
-        sid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_SENSOR, name)
-        if sid < 0:
-            if required:
-                raise RuntimeError(f"Sensor {name!r} not in compiled model.")
-            return -1
-        return int(self.mj_model.sensor_adr[sid])
-
+        cur
