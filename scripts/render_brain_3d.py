@@ -195,6 +195,20 @@ def main() -> int:
         help="RNG seed for --random action sampling.",
     )
     p.add_argument("--steps", type=int, default=600)
+    p.add_argument(
+        "--settle-ticks",
+        type=int,
+        default=100,
+        help="mj_step ticks (each 5 ms) to settle the physics after reset "
+        "and before the recorded rollout starts. Default 100 = 0.5 sim sec. "
+        "Set to 0 to disable (cat may visibly drop on tick 0).",
+    )
+    p.add_argument(
+        "--use-physics",
+        action="store_true",
+        default=True,
+        help="(internal) settle phase only fires when physics is active.",
+    )
     p.add_argument("--out", default="renders/brain_3d.mp4")
     p.add_argument("--width-main", type=int, default=960)
     p.add_argument("--height-main", type=int, default=640)
@@ -329,6 +343,22 @@ def main() -> int:
 
     obs = env.reset()
     _log(f"reset OK; cat at xy={obs['cat_xy']} yaw={obs['cat_yaw']:.3f}")
+
+    # --- Settle physics before recording -----------------------------
+    # PhysicsCat spawns the cat at z=DEFAULT_BASE_SPAWN_Z (0.278 m) with
+    # default joint targets and zero velocity. That height isn't perfectly
+    # at equilibrium with the actuator default pose, so gravity pulls the
+    # cat down a couple of cm in the first ~0.5 s. To avoid that visible
+    # "drop on tick 0" in the render, step the sim without recording for
+    # `args.settle_ticks` ticks of mj_step (each 5 ms by default).
+    if args.settle_ticks > 0 and args.use_physics:
+        _log(f"settling physics for {args.settle_ticks} ticks "
+             f"({args.settle_ticks * 0.005:.2f} s sim) before recording...")
+        for _ in range(args.settle_ticks):
+            mujoco.mj_step(env.mj_model, env.mj_data)
+        env.cat._refresh_pose_cache(env.mj_data)
+        _log(f"  after settle: z={env.cat.body_height:.3f} "
+             f"speed={env.cat.last_speed:.3f}")
 
     # --- Renderers ----------------------------------------------------- #
     _log(f"creating renderers: main={args.width_main}x{args.height_main}, "

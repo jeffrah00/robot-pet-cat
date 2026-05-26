@@ -445,7 +445,12 @@ class BrainEnv:
                     action = HOLD_ACTION
 
         if action == HOLD_ACTION:
-            new_skill_name = None
+            # 2026-05-26: HOLD action now binds to the `stay` skill so the
+            # body holds its current pose AND the HUD / skill tracking layer
+            # show "stay" (the visible behavior) rather than the brain-layer
+            # "(hold)" no-op. The brain still emits action 0 as before; the
+            # env interprets it as "dispatch stay" instead of "no skill".
+            new_skill_name = "stay"
             info["dispatched"] = "hold"
         else:
             new_skill_name = SKILL_NAMES[action - 1]
