@@ -36,6 +36,7 @@ from .trot import Trot
 from .turn_in_place import TurnInPlace
 from .walk import Walk
 from .get_up import GetUp
+from .stay import Stay
 
 
 
@@ -56,6 +57,7 @@ def _build_skills() -> dict[str, Skill]:
         "crouch": Crouch(),
         "lie_belly": LieBelly(),   # prone sphinx/loaf pose
         "lie_side": LieSide(),     # side-lying pose (right side down)
+        "stay": Stay(),            # freeze current joint config
     }
 
 
@@ -68,6 +70,7 @@ SKILL_NAMES: tuple[str, ...] = (
     "crouch",
     "lie_belly",
     "lie_side",
+    "stay",
 )
 
 SKILL_INDEX: dict[str, int] = {name: i for i, name in enumerate(SKILL_NAMES)}

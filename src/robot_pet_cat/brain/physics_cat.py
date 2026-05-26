@@ -268,6 +268,9 @@ class PhysicsCat:
         # switching between walker and hind_sit (the two policies have
         # different action distributions; a stale last_action is OOD).
         self._last_active_policy = "walker"
+        # Held joint targets for gait="stay" -- snapshotted on
+        # activation, written every tick thereafter.
+        self._stay_targets = np.zeros(12, dtype=np.float32)
         # Settle-step counter for the get_up policy (trained at 8 Hz,
         # settle_steps=25 vs walker decimation=4 at 50 Hz).
         self._get_up_substep_counter: int = 0
@@ -396,10 +399,18 @@ class PhysicsCat:
         use_slow_walker = (
             cmd.gait == "walk_slow" and self.walker_slow_policy is not None
         )
+        use_stay = (cmd.gait == "stay")
         # Back-compat names used downstream.
         use_hind_sit = (cmd.gait == "hind_sit") and (self.hind_sit_policy is not None)
         use_get_up = use_posture  # all posture policies follow the get_up dispatch shape
-        active = cmd.gait if use_posture else ("walker_slow" if use_slow_walker else "walker")
+        if use_posture:
+            active = cmd.gait
+        elif use_slow_walker:
+            active = "walker_slow"
+        elif use_stay:
+            active = "stay"
+        else:
+            active = "walker"
 
         # When switching between policies, zero last_action: the two heads
         # have different action distributions and feeding the wrong one's
@@ -416,6 +427,12 @@ class PhysicsCat:
                 _newp = posture_policies[active]
                 if _newp is not None and hasattr(_newp, "reset"):
                     _newp.reset()
+            elif active == "stay":
+                # Snapshot current joint configuration; held forever after.
+                self._stay_targets = np.array(
+                    [mj_data.qpos[self._joint_qpos_adr[i]] for i in range(12)],
+                    dtype=np.float32,
+                )
 
         # Map LocomotionCommand -> 3-dim twist (only used by walker path).
         cmd_arr = self._command_to_twist(cmd)
@@ -431,7 +448,11 @@ class PhysicsCat:
                 query = (self._get_up_substep_counter % GET_UP_SETTLE_STEPS == 0)
             else:
                 query = (substep % self.cfg.decimation == 0)
-            if query:
+            if query and use_stay:
+                # Held-pose bypass: no policy call, no obs build.
+                for _i in range(12):
+                    mj_data.ctrl[self._actuator_ids[_i]] = float(self._stay_targets[_i])
+            elif query:
                 if use_posture:
                     # All posture policies use the 42/46-dim get_up obs shape.
                     obs = self._build_posture_observation(mj_data, posture_policies[active])
