@@ -157,7 +157,7 @@ def main() -> None:
             h = cat.body_height
             _log(f"  get_up tick {tick:4d}  height={h:.3f}m  frames={len(frames)}")
         # Early stop: robot is upright
-        if cat.body_height > STAND_HEIGHT_THRESH and tick > 30:
+        if cat.body_height > STAND_HEIGHT_THRESH and tick > 3:
             _log(f"  standing at tick {tick} (height={cat.body_height:.3f}m), "
                  "moving to lie_belly")
             break
