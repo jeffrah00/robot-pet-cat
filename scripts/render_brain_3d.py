@@ -345,18 +345,20 @@ def main() -> int:
     _log(f"reset OK; cat at xy={obs['cat_xy']} yaw={obs['cat_yaw']:.3f}")
 
     # --- Settle physics before recording -----------------------------
-    # PhysicsCat spawns the cat at z=DEFAULT_BASE_SPAWN_Z (0.278 m) with
-    # default joint targets and zero velocity. That height isn't perfectly
-    # at equilibrium with the actuator default pose, so gravity pulls the
-    # cat down a couple of cm in the first ~0.5 s. To avoid that visible
-    # "drop on tick 0" in the render, step the sim without recording for
-    # `args.settle_ticks` ticks of mj_step (each 5 ms by default).
+    # Spawn pose isn't perfectly at the walker's standing equilibrium, so
+    # without active control the cat oscillates / bounces in the first
+    # half-second. Run the walker policy with a zeroed velocity command
+    # (gait="stand") for `args.settle_ticks` mj_step ticks so the walker
+    # actively balances and damps the spawn transient. Each env tick is
+    # 10 substeps, so we convert ticks->env steps before driving cat.step.
     if args.settle_ticks > 0 and args.use_physics:
-        _log(f"settling physics for {args.settle_ticks} ticks "
-             f"({args.settle_ticks * 0.005:.2f} s sim) before recording...")
-        for _ in range(args.settle_ticks):
-            mujoco.mj_step(env.mj_model, env.mj_data)
-        env.cat._refresh_pose_cache(env.mj_data)
+        from robot_pet_cat.skills.skill_policy import LocomotionCommand
+        n_env_steps = max(1, args.settle_ticks // 10)
+        env_dt = env.cfg.dt_s
+        _log(f"settling with walker (gait='stand') for {n_env_steps} env "
+             f"steps ({n_env_steps * env_dt:.2f} s sim) before recording...")
+        for _ in range(n_env_steps):
+            env.cat.step(env.mj_data, LocomotionCommand(gait="stand"), env_dt)
         _log(f"  after settle: z={env.cat.body_height:.3f} "
              f"speed={env.cat.last_speed:.3f}")
 
