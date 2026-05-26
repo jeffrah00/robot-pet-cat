@@ -444,10 +444,10 @@ class PhysicsCat:
         n_substeps = max(1, int(round(dt / self.cfg.physics_dt)))
         for substep in range(n_substeps):
             # Re-query the active policy at the correct rate.
-            if use_get_up:
-                query = (self._get_up_substep_counter % GET_UP_SETTLE_STEPS == 0)
-            else:
-                query = (substep % self.cfg.decimation == 0)
+            # mjlab Go1-Getup trains with decimation=4 (50 Hz), same as walker.
+            # settle_steps=25 is the training-time reset-window mask, NOT
+            # a decimation. Earlier code queried posture policies at 8 Hz.
+            query = (substep % self.cfg.decimation == 0)
             if query and use_stay:
                 # Held-pose bypass: no policy call, no obs build.
                 for _i in range(12):
@@ -468,13 +468,21 @@ class PhysicsCat:
                 if cmd.joint_targets is not None:
                     targets = np.asarray(cmd.joint_targets, dtype=np.float32)
                 elif use_posture:
-                    # 42-dim posture policies (get_up + crouch/lie_belly/
-                    # lie_side derived from it): base=zeros, scale=0.6,
-                    # permute MJCF -> phys.
+                    # mjlab posture policies (get_up + crouch/lie_belly/lie_side)
+                    # use SettleRelativeJointPositionAction:
+                    #   target = current_pos + raw_action * 0.6 - encoder_bias
+                    # encoder_bias=0 at deployment. Earlier code wrote
+                    # `target = 0.6 * action` (absolute from zero) which
+                    # pushed every joint toward ~0 rad on each query.
                     _GO1_PERM = self._GO1_TO_PHYS_PERM
+                    qpos_now = mj_data.qpos
                     targets = np.zeros(12, dtype=np.float32)
                     for _k in range(12):
-                        targets[_GO1_PERM[_k]] = 0.6 * self._last_action[_k]
+                        phys_i = _GO1_PERM[_k]
+                        targets[phys_i] = (
+                            float(qpos_now[self._joint_qpos_adr[phys_i]])
+                            + 0.6 * self._last_action[_k]
+                        )
                 else:
                     # Walker policy returns actions in Go1 MJCF order
                     # (FR,FL,RR,RL); PhysicsCat actuator_ids are in
@@ -585,8 +593,13 @@ class PhysicsCat:
 
         p = self._GO1_TO_PHYS_PERM
         qpos = mj_data.qpos
+        # mjlab joint_pos_rel(biased=True) = joint_pos_biased - default_joint_pos.
+        # Go1 EntityCfg.init_state.joint_pos sets a non-zero default
+        # (hip +/-0.1, thigh 0.9, calf -1.8 == GO2_DEFAULT_JOINT_POS).
+        # encoder_bias=0 at deployment.
         joint_pos = np.array(
-            [qpos[self._joint_qpos_adr[p[i]]] for i in range(12)],
+            [qpos[self._joint_qpos_adr[p[i]]] - GO2_DEFAULT_JOINT_POS[p[i]]
+             for i in range(12)],
             dtype=np.float32,
         )
         qvel = mj_data.qvel
