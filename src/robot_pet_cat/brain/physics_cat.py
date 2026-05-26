@@ -49,26 +49,27 @@ from .go2_policy import (
     GO2_POLICY_DECIMATION,
     WalkerPolicy,
     load_go2_walker_policy,
+    load_go1_walker_policy,
     load_hind_sit_policy,
     load_get_up_policy,
 )
 
 
 # Default base height at spawn (matches Unitree training init_state, m).
-DEFAULT_BASE_SPAWN_Z = 0.32
+DEFAULT_BASE_SPAWN_Z = 0.278
 
-# Name of the Go2 base body in menagerie's go2_mjx.xml.
-GO2_BASE_BODY = "base_link"
+# Name of the Go1 base body in menagerie's go1.xml.
+GO1_BASE_BODY = "trunk"
 
 
 def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
-    """Patch the menagerie go2_mjx.xml in `assets` to mount a cat_eye camera
-    onto the Go2 base body. Returns the same dict (mutated).
+    """Patch the menagerie go1.xml in `assets` to mount a cat_eye camera
+    onto the Go1 trunk body. Returns the same dict (mutated).
 
     MuJoCo's standalone XML does not let an outer file `re-open` an included
     body by name -- duplicate <body name="base"> raises XML Error. To attach
     a body-mounted POV camera, we inject the <camera> as the first child of
-    the existing <body name="base"...> tag inside go2_mjx.xml's content as
+    the existing <body name="base"...> tag inside go1.xml's content as
     held in the assets dict, then compile from_xml_string with the patched
     asset.
 
@@ -76,7 +77,7 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
     """
     import re
 
-    KEY = "go2_mjx.xml"
+    KEY = "go1.xml"
     if KEY not in assets:
         return assets
     text = assets[KEY].decode("utf-8")
@@ -93,14 +94,14 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
         'type="sphere" group="2" rgba="1 0.5 0.5 0.6"/>'
     )
     new_text, n = re.subn(
-        r'(<body name="base"[^>]*>)',
+        r'(<body name="trunk"[^>]*>)',
         r'\1' + cam_block,
         text,
         count=1,
     )
     if n == 0:
         raise RuntimeError(
-            "Could not find <body name=\"base\" ...> in go2_mjx.xml to "
+            "Could not find <body name=\"trunk\" ...> in go1.xml to "
             "inject cat_eye camera."
         )
     assets[KEY] = new_text.encode("utf-8")
@@ -150,7 +151,7 @@ class PhysicsCat:
         if callable(policy):
             self.policy: WalkerPolicy = policy
         else:
-            self.policy = load_go2_walker_policy(policy)
+            self.policy = load_go1_walker_policy(policy)
 
         # Optional hind_sit policy: dispatched when a skill emits
         # gait="hind_sit". Same actuator pipeline as the walker (action *
@@ -173,11 +174,11 @@ class PhysicsCat:
             self.get_up_policy = load_get_up_policy(get_up_policy)
         # ---- Index lookups against the compiled MuJoCo model ----------- #
         # Base body and its free-joint qpos/qvel offsets.
-        base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, GO2_BASE_BODY)
+        base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, GO1_BASE_BODY)
         if base_id < 0:
             raise RuntimeError(
-                f"Go2 base body {GO2_BASE_BODY!r} not in compiled model. "
-                "Did the scene <include> go2_mjx.xml?"
+                f"Go1 base body {GO1_BASE_BODY!r} not in compiled model. "
+                "Did the scene <include> go1.xml?"
             )
         self._base_body_id = base_id
         # Find the free joint attached to the base body. There should be
@@ -193,7 +194,7 @@ class PhysicsCat:
                 self._base_qvel_adr = int(mj_model.jnt_dofadr[j])
                 break
         if self._base_qpos_adr < 0:
-            raise RuntimeError("No free joint on Go2 base body in compiled model.")
+            raise RuntimeError("No free joint on Go1 trunk body in compiled model.")
 
         # Leg joint qpos / qvel addresses, in GO2_JOINT_NAMES order.
         self._joint_qpos_adr = np.zeros(12, dtype=np.int32)
@@ -206,7 +207,7 @@ class PhysicsCat:
             self._joint_qvel_adr[i] = int(mj_model.jnt_dofadr[jid])
 
         # Actuator ids, in the same joint order. Actuator names in
-        # menagerie's go2_mjx.xml match the joint names without "_joint":
+        # menagerie's go1.xml match the joint names without "_joint":
         # FR_hip_joint -> FR_hip. Try both spellings.
         self._actuator_ids = np.zeros(12, dtype=np.int32)
         for i, jname in enumerate(GO2_JOINT_NAMES):
@@ -386,13 +387,18 @@ class PhysicsCat:
                     obs = self._build_observation(mj_data, cmd_arr)
                     action = self.policy(obs[None, :])[0]
                 self._last_action = np.asarray(action, dtype=np.float32)
-                # Joint targets in MJCF order.
-                # get_up (Go1): SettleRelativeJointPositionActionCfg,
-                #   base = Go1 default (all zeros), scale = 0.6
-                # walker / hind_sit (Go2): base = GO2_DEFAULT_JOINT_POS, scale = cfg.action_scale
-                if use_get_up:
+                # Joint targets = default + scale * action, in MJCF order.
+                # Both policies use the same action_scale and default pose.
+                # If cmd.joint_targets is set, bypass policy and drive
+                # actuators directly (manual PD skills like lie_down).
+                if cmd.joint_targets is not None:
+                    targets = np.asarray(cmd.joint_targets, dtype=np.float32)
+                elif use_get_up:
+                    # get_up (Go1): SettleRelativeJointPositionActionCfg,
+                    # base = Go1 default (all zeros), scale = 0.6
                     targets = 0.6 * self._last_action
                 else:
+                    # walker / hind_sit (Go2): base = GO2_DEFAULT_JOINT_POS
                     targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
                 for i in range(12):
                     mj_data.ctrl[self._actuator_ids[i]] = float(targets[i])
@@ -530,25 +536,20 @@ class PhysicsCat:
         return obs
 
     def _build_observation(self, mj_data, cmd_arr: np.ndarray) -> np.ndarray:
-        """Build the 48-dim obs the Go1 flat velocity walker was trained against.
+        """Build 48-dim obs for Go1 flat velocity walker.
 
         Layout: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)
                 +joint_pos(12)+joint_vel(12)+action(12) = 48
         """
         # 1. base_lin_vel (3) -- root translational velocity in body frame.
         # qvel[0:3] is world-frame linear velocity of the free joint.
-        # Rotate into body frame: v_body = R^T @ v_world.
         xmat = np.asarray(mj_data.xmat[self._base_body_id]).reshape(3, 3)
         base_lin_vel = (xmat.T @ mj_data.qvel[:3]).astype(np.float32)
 
         # 2. base_ang_vel (3) -- gyro reading.
         base_ang_vel = mj_data.sensordata[self._gyro_adr : self._gyro_adr + 3]
 
-        # 3. projected_gravity (3): world gravity (0,0,-1) expressed in
-        # body frame. xmat is R_world<-body (column i = i-th body axis in
-        # world coords). To rotate a world-frame vector into body coords,
-        # premultiply by R^T, so projected_gravity = R^T @ [0,0,-1] =
-        # -R[2,:] (third ROW of xmat, NOT third column).
+        # 3. projected_gravity (3): -R[2,:] (third ROW of xmat)
         projected_gravity = -xmat[2, :]
 
         # 4. command (3): the velocity twist [vx, vy, yaw_rate].
@@ -641,4 +642,50 @@ class PhysicsCat:
 
         Called by BrainEnv when JumpTo.launch_requested is True. After this
         call BrainEnv's normal cat.step() continues, integrating the impulse
-        through all physics substeps this 
+        through all physics substeps this tick and onward.
+
+        Physics:
+          v_z = sqrt(2*g*(dz + margin))  -- enough to clear platform top
+          v_xy = direction * (d_xy / t_land)  -- land approximately on target
+        """
+        g = 9.81
+        adr = self._base_qpos_adr
+        vadr = self._base_qvel_adr
+
+        cur_x = float(mj_data.qpos[adr + 0])
+        cur_y = float(mj_data.qpos[adr + 1])
+        cur_z = float(mj_data.qpos[adr + 2])
+
+        tx, ty, tz = target_xyz
+        dz = max(0.0, tz - cur_z) + 0.08  # 8 cm clearance above platform
+        # Cap dz to prevent runaway vz if cur_z is weird (e.g. physics instability).
+        dz = min(dz, 0.5)  # max 50 cm effective rise -- gives vz ~ 3.1 m/s max
+        vz = math.sqrt(2.0 * g * dz)
+        t_peak = vz / g
+        t_land = 2.0 * t_peak  # approximate total time of flight
+
+        dx, dy = tx - cur_x, ty - cur_y
+        d_xy = math.hypot(dx, dy)
+        if d_xy > 1e-3:
+            vx = dx / max(t_land, 0.01)
+            vy = dy / max(t_land, 0.01)
+        else:
+            vx, vy = 0.0, 0.0
+
+        mj_data.qvel[vadr + 0] = vx
+        mj_data.qvel[vadr + 1] = vy
+        mj_data.qvel[vadr + 2] = vz
+        # Zero angular velocity for a clean arc.
+        mj_data.qvel[vadr + 3] = 0.0
+        mj_data.qvel[vadr + 4] = 0.0
+        mj_data.qvel[vadr + 5] = 0.0
+
+    def _sensor_adr(self, name: str, required: bool = True) -> int:
+        mujoco = self._mujoco
+        sid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_SENSOR, name)
+        if sid < 0:
+            if required:
+                raise RuntimeError(f"Sensor {name!r} not in compiled model.")
+            return -1
+        return int(self.mj_model.sensor_adr[sid])
+
