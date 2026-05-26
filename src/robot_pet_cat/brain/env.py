@@ -137,7 +137,7 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
     """
     del scene_state, cat_xy  # unused after pivot
     if skill_name in ("get_up", "walk_normal", "walk_slow",
-                       "crouch", "lie_belly", "lie_side"):
+                       "crouch", "lie_belly", "lie_side", "stay"):
         return None
     raise KeyError(f"no default goal recipe for skill {skill_name!r}")
 
