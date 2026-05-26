@@ -39,6 +39,7 @@ from robot_pet_cat.brain.env import BrainEnv, BrainEnvConfig
 from robot_pet_cat.skills.get_up import GetUp
 from robot_pet_cat.skills.lie_belly import LieBelly
 from robot_pet_cat.brain.physics_cat import LocomotionCommand
+from robot_pet_cat.brain.go2_policy import load_get_up_policy
 
 # Body height threshold above which the robot is considered to be standing.
 STAND_HEIGHT_THRESH = 0.25  # metres
@@ -50,8 +51,10 @@ def _log(msg: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", required=True,
-                    help="Walker policy path (.onnx or .pt)")
+    ap.add_argument("--policy", default="models/go1_walker_v0.pt",
+                    help="Walker policy path")
+    ap.add_argument("--getup-policy", default="models/get_up_go1_v1.pt",
+                    help="Mjlab go1_getup checkpoint")
     ap.add_argument("--out", default="renders/lie_belly_go1_v1.mp4")
     ap.add_argument("--getup-ticks", type=int, default=300,
                     help="Max ticks for get_up phase (stops early when standing)")
@@ -84,6 +87,23 @@ def main() -> None:
     mj_data  = env.mj_data
     cat      = env.cat
     dt       = cfg.dt_s
+
+    # Inject mjlab get_up policy
+    cat.get_up_policy = load_get_up_policy(args.getup_policy)
+    cat._last_active_policy = "walker"
+    print(f"[render_lie_belly]  get_up policy obs_dim={cat.get_up_policy.obs_dim}", flush=True)
+    # Spawn prone
+    import mujoco as _mj
+    _adr = cat._base_qpos_adr; _vadr = cat._base_qvel_adr
+    _pj = [+0.30,1.60,-2.70, -0.30,1.60,-2.70, +0.30,1.60,-2.70, -0.30,1.60,-2.70]
+    mj_data.qpos[_adr:_adr+7] = [0.,0.,0.06, 1.,0.,0.,0.]
+    mj_data.qvel[_vadr:_vadr+6] = 0.
+    for _i in range(12):
+        mj_data.qpos[cat._joint_qpos_adr[_i]] = _pj[_i]
+        mj_data.qvel[cat._joint_qvel_adr[_i]] = 0.
+        mj_data.ctrl[cat._actuator_ids[_i]] = _pj[_i]
+    _mj.mj_forward(mj_model, mj_data); cat._refresh_pose_cache(mj_data)
+    print(f"[render_lie_belly]  spawned prone z={cat.body_height:.3f}m", flush=True)
 
     # ------------------------------------------------------------------ #
     # Renderer + tracking camera
