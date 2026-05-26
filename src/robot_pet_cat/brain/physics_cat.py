@@ -687,4 +687,37 @@ class PhysicsCat:
         adr = self._base_qpos_adr
         vadr = self._base_qvel_adr
 
-        cur
+        cur_x = float(mj_data.qpos[adr + 0])
+        cur_y = float(mj_data.qpos[adr + 1])
+        cur_z = float(mj_data.qpos[adr + 2])
+
+        tx, ty, tz = target_xyz
+        dz = max(0.0, tz - cur_z) + 0.08  # 8 cm clearance above platform
+        dz = min(dz, 0.5)
+        vz = math.sqrt(2.0 * g * dz)
+        t_peak = vz / g
+        t_land = 2.0 * t_peak
+
+        dx, dy = tx - cur_x, ty - cur_y
+        d_xy = math.hypot(dx, dy)
+        if d_xy > 1e-3:
+            vx = dx / max(t_land, 0.01)
+            vy = dy / max(t_land, 0.01)
+        else:
+            vx, vy = 0.0, 0.0
+
+        mj_data.qvel[vadr + 0] = vx
+        mj_data.qvel[vadr + 1] = vy
+        mj_data.qvel[vadr + 2] = vz
+        mj_data.qvel[vadr + 3] = 0.0
+        mj_data.qvel[vadr + 4] = 0.0
+        mj_data.qvel[vadr + 5] = 0.0
+
+    def _sensor_adr(self, name: str, required: bool = True) -> int:
+        mujoco = self._mujoco
+        sid = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_SENSOR, name)
+        if sid < 0:
+            if required:
+                raise RuntimeError(f"Sensor {name!r} not in compiled model.")
+            return -1
+        return int(self.mj_model.sensor_adr[sid])
