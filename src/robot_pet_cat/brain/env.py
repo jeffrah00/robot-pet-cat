@@ -596,7 +596,12 @@ class BrainEnv:
 
     def _command_from_active_skill(self) -> LocomotionCommand:
         if self.active_skill_name is None:
-            return LocomotionCommand(gait="stand")
+            # HOLD (action 0) = no skill active. Freeze in current pose
+            # rather than driving the walker to its default standing pose
+            # (which moves the legs noticeably). Equivalent to dispatching
+            # `stay` without committing the brain to that skill name --
+            # active_skill_name stays None for the HUD / reward layer.
+            return LocomotionCommand(gait="stay")
         scene_state = self._extract_scene_state()
         goal = pick_default_goal(self.active_skill_name, scene_state, self.cat.xy)
         skill_obs = self._skill_obs_dict()
