@@ -355,13 +355,13 @@ class PhysicsCat:
 
         # Default joint angles + zero joint velocities
         for i in range(12):
-            qpos[self._joint_qpos_adr[i]] = 0.0  # Go1 default is zero
+            qpos[self._joint_qpos_adr[i]] = float(GO2_DEFAULT_JOINT_POS[i])  # default standing pose
             qvel[self._joint_qvel_adr[i]] = 0.0
 
         # Clear ctrl too (otherwise stale targets from last episode survive).
         mj_data.ctrl[:] = 0.0
         for i in range(12):
-            mj_data.ctrl[self._actuator_ids[i]] = 0.0  # Go1 default is zero
+            mj_data.ctrl[self._actuator_ids[i]] = float(GO2_DEFAULT_JOINT_POS[i])  # default standing pose target
 
         mujoco.mj_forward(self.mj_model, mj_data)
 
