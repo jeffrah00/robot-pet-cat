@@ -202,9 +202,10 @@ def main() -> int:
     )
     p.add_argument(
         "--get-up-checkpoint",
-        default="models/get_up_v7_4300.pt",
-        help="Path to the trained get_up policy. Ignored when "
-        "--scripted-get-up is set.",
+        default="models/mjlab_go1_getup.pt",
+        help="Path to the trained get_up policy. Default is the mjlab "
+        "playground Unitree-Go1-Getup-Flat checkpoint (proven-working). "
+        "Ignored when --scripted-get-up is set.",
     )
     p.add_argument(
         "--knock-down", action="store_true",
@@ -384,11 +385,4 @@ def main() -> int:
                   fill=(255, 255, 255, 240), font=font)
         canvas = np.array(im)
 
-        writer.append_data(canvas)
-
-    writer.close()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+        writer.append_
