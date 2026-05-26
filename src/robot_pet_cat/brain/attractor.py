@@ -73,22 +73,24 @@ class Attractor(str, Enum):
 # MODE_HARD_BLOCKED (below) still denies locomotion during rest/groom even
 # when soft-pass would let it through.
 MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
-    # 2026-05-25 redistribution: project pivoted to Go1 + mjlab_playground.
-    # The only skills we have now are the 6 trained on top of the
-    # mjlab_playground recipes (see [[project_pivot_to_go1]]). get_up is
-    # universal across modes as the recovery skill.
+    # 2026-05-26 update: project pivoted to Go1 + mjlab_playground. The
+    # canonical set is 7 skills now (6 mjlab + manual `stay`). get_up is
+    # universal across modes as the recovery skill; `stay` (freeze current
+    # pose) appears in modes where stillness is iconic (RESTING, OBSERVING,
+    # STALKING, GROOMING) and is omitted from motion-dominant modes
+    # (PLAYING, EXPLORING). See [[project_pivot_to_go1]] for context.
     #
     # Settled, low energy. Lying poses + low alert + recovery.
     Attractor.RESTING:   (
-        "lie_belly", "lie_side", "crouch", "get_up",
+        "lie_belly", "lie_side", "crouch", "get_up", "stay",
     ),
     # Alert but not pursuing. Stationary low watch + slow approach + recovery.
     Attractor.OBSERVING: (
-        "crouch", "walk_slow", "get_up",
+        "crouch", "walk_slow", "get_up", "stay",
     ),
     # Pre-pounce, locked on something. Low ready pose + slow creep.
     Attractor.STALKING:  (
-        "crouch", "walk_slow", "get_up",
+        "crouch", "walk_slow", "get_up", "stay",
     ),
     # Active engagement with a play target. Brisk locomotion + slow stalking.
     Attractor.PLAYING:   (
@@ -96,7 +98,7 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
     ),
     # Static / quiet self-care. Mirrors resting; mood distinguishes.
     Attractor.GROOMING:  (
-        "lie_belly", "lie_side", "crouch", "get_up",
+        "lie_belly", "lie_side", "crouch", "get_up", "stay",
     ),
     # Locomotion-dominant, low-engagement wandering.
     Attractor.EXPLORING: (

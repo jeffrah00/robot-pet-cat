@@ -85,16 +85,19 @@ def _set_fallen_state(mj_model, mj_data, joint_qpos_adrs):
     _mj.mj_forward(mj_model, mj_data)
 
 SCRIPTED_SCHEDULE_S = [
-    # 2026-05-25 post-Go1 pivot: cycle through the canonical 6-skill set.
-    # Skill name appears in HUD; underlying locomotion is the Go2 walker.
+    # 2026-05-26 post-Go1 pivot + `stay` addition: cycle through the canonical
+    # 7-skill set. Skill name appears in HUD; underlying locomotion uses Go1
+    # mjlab walkers + the 4 mjlab posture policies + the keyframe lie_belly
+    # ramp + the new `stay` freeze.
     (0.0,  "get_up"),       # lead with get_up; knock-down fires at t=1.0 so
                             # the policy has something to recover from
     (1.05, "get_up"),       # explicit re-entry right after knock at t=1.0
-    (6.0,  "walk_slow"),      # gentle locomotion
-    (9.0,  "crouch"),          # alert low posture
-    (12.0, "lie_belly"),       # rest on belly
-    (15.0, "lie_side"),        # rest on side
-    (18.0, "walk_normal"),     # back to active
+    (4.0,  "stay"),         # freeze the post-recovery pose for ~2s
+    (6.0,  "walk_slow"),    # gentle locomotion
+    (9.0,  "crouch"),       # alert low posture
+    (12.0, "lie_belly"),    # rest on belly
+    (15.0, "lie_side"),     # rest on side
+    (18.0, "walk_normal"),  # back to active
 ]
 
 
@@ -177,6 +180,20 @@ def main() -> int:
         action="store_true",
         help="Use the hand-coded action schedule instead of a PPO model.",
     )
+    p.add_argument(
+        "--random",
+        action="store_true",
+        help="Sample actions uniformly at random from the skills the current "
+        "attractor mode allows. Combines with --no-mode-policy to sample from "
+        "all skills. Preferred over the stale brain PPO checkpoints, which "
+        "predate the Go1 6-skill pivot and have mismatched action indices.",
+    )
+    p.add_argument(
+        "--random-seed",
+        type=int,
+        default=0,
+        help="RNG seed for --random action sampling.",
+    )
     p.add_argument("--steps", type=int, default=600)
     p.add_argument("--out", default="renders/brain_3d.mp4")
     p.add_argument("--width-main", type=int, default=960)
@@ -253,8 +270,11 @@ def main() -> int:
             _log(f"  could not load checkpoint ({type(e).__name__}: {e}); "
                  "falling back to scripted")
             ppo_model = None
-    if ppo_model is None:
-        _log("using scripted action stream")
+    if ppo_model is None and not args.scripted and not args.random:
+        _log("no PPO checkpoint, --scripted, or --random; defaulting to scripted")
+    if args.random:
+        _log(f"using uniform-random action sampler (seed={args.random_seed})")
+    rng_action = __import__("numpy").random.default_rng(args.random_seed)
 
     import mujoco
     from PIL import Image  # noqa
@@ -348,7 +368,25 @@ def main() -> int:
             _set_fallen_state(env.mj_model, env.mj_data, env.cat._joint_qpos_adr)
             knock_done = True
             _log(f" placed cat in fallen state at t={env.t_sim:.2f}s")
-        if ppo_model is not None:
+        if args.scripted:
+            action = _scripted_action(env.t_sim, env)
+        elif args.random:
+            # Uniform-random sample from the mode_policy's allowed-action mask
+            # (or all actions if no mode_policy). HOLD (action 0) is always
+            # in the mask.
+            n_actions = env.action_space_n
+            if env.mode_policy is not None:
+                from robot_pet_cat.skills.skill_registry import SKILL_NAMES as _SN
+                mask = env.mode_policy.allowed_action_mask(n_actions, _SN)
+                import numpy as _np
+                allowed = _np.flatnonzero(mask)
+                if len(allowed) == 0:
+                    action = 0
+                else:
+                    action = int(rng_action.choice(allowed))
+            else:
+                action = int(rng_action.integers(0, n_actions))
+        elif ppo_model is not None:
             flat_obs = obs_dict_to_curiosity_vec(obs)
             action, _ = ppo_model.predict(flat_obs, deterministic=False)
             action = int(action)
