@@ -388,7 +388,12 @@ class PhysicsCat:
                 self._last_action = np.asarray(action, dtype=np.float32)
                 # Joint targets = default + scale * action, in MJCF order.
                 # Both policies use the same action_scale and default pose.
-                targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
+                # If cmd.joint_targets is set, bypass policy and drive
+                # actuators directly (manual PD skills like lie_down).
+                if cmd.joint_targets is not None:
+                    targets = np.asarray(cmd.joint_targets, dtype=np.float32)
+                else:
+                    targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
                 for i in range(12):
                     mj_data.ctrl[self._actuator_ids[i]] = float(targets[i])
 
