@@ -394,9 +394,13 @@ class PhysicsCat:
                 if cmd.joint_targets is not None:
                     targets = np.asarray(cmd.joint_targets, dtype=np.float32)
                 elif use_get_up:
-                    # get_up (Go1): SettleRelativeJointPositionActionCfg,
-                    # base = Go1 default (all zeros), scale = 0.6
-                    targets = 0.6 * self._last_action
+                    # go1_getup actions are in Go1 MJCF order: FR,FL,RR,RL
+                    # _actuator_ids is in GO2_JOINT_NAMES order: FL,FR,RL,RR
+                    # Permutation maps Go1 policy index -> PhysicsCat internal index
+                    _GO1_PERM = (3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8)
+                    targets = np.zeros(12, dtype=np.float32)
+                    for _k in range(12):
+                        targets[_GO1_PERM[_k]] = 0.6 * self._last_action[_k]
                 else:
                     # walker / hind_sit (Go2): base = GO2_DEFAULT_JOINT_POS
                     targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
@@ -444,11 +448,11 @@ class PhysicsCat:
     def _build_get_up_observation(self, mj_data) -> np.ndarray:
         """Get_up obs sized to match the loaded policy.
 
-        Routes to _build_go1_getup_observation (42-dim, Go1 zero-offset)
+        Routes to _build_go1_getup_observation (42-dim, Go1 MJCF joint order)
         for the mjlab Unitree-Go1-Getup-Flat policy.  For 46-dim FR-Net
         policies (v7+), appends 4 real foot-contact bits.
         """
-        base = self._build_go1_getup_observation(mj_data)  # 42-dim, Go1 zero-offset
+        base = self._build_go1_getup_observation(mj_data)  # 42-dim, Go1 MJCF order
         target_dim = getattr(self.get_up_policy, "obs_dim", 42)
         if target_dim == 42:
             return base
@@ -459,14 +463,22 @@ class PhysicsCat:
             f"get_up policy has unsupported obs_dim={target_dim}; expected 42 or 46"
         )
 
+    # Joint permutation: Go1 MJCF order (FR,FL,RR,RL) -> PhysicsCat GO2_JOINT_NAMES order (FL,FR,RL,RR)
+    # go1_getup and go1_walker train with joints indexed in MJCF natural order.
+    # PhysicsCat indexes _joint_qpos_adr / _actuator_ids in GO2_JOINT_NAMES order.
+    # This permutation p satisfies: phys_index[k] = GO1_TO_PHYS_PERM[k] for go1_joint k.
+    # The permutation is its own inverse (swapping FL<->FR and RL<->RR leg pairs).
+    _GO1_TO_PHYS_PERM = (3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8)
+
     def _build_go1_getup_observation(self, mj_data) -> np.ndarray:
         """42-dim obs for the mjlab Unitree-Go1-Getup-Flat policy.
 
-        go1_getup was trained with joint_pos_rel(biased=True) which
-        subtracts asset.data.default_joint_pos.  The Go1 MJCF has no
-        keyframe so default_joint_pos == zeros for all 12 joints.
-        Therefore joint_pos is raw qpos -- NOT offset by Go2 standing
-        angles (+-0.10, 0.90, -1.80) that _build_hind_sit_observation uses.
+        go1_getup uses joint_pos_rel(biased=True).  Go1 MJCF has no keyframe
+        so default_joint_pos == zeros -> joint_pos = raw qpos.
+
+        Crucially, mjlab iterates joints in MJCF natural order: FR,FL,RR,RL.
+        PhysicsCat stores _joint_qpos_adr in GO2_JOINT_NAMES order: FL,FR,RL,RR.
+        We apply _GO1_TO_PHYS_PERM to read qpos/qvel in the order the policy expects.
 
         Layout: base_ang_vel(3) + proj_grav(3) + joint_pos(12)
                 + joint_vel(12) + last_action(12) = 42
@@ -475,16 +487,17 @@ class PhysicsCat:
         projected_gravity = -xmat[2, :]
         base_ang_vel = mj_data.sensordata[self._gyro_adr : self._gyro_adr + 3]
 
+        p = self._GO1_TO_PHYS_PERM
         qpos = mj_data.qpos
-        # Go1 default_joint_pos == 0 for all joints (no keyframe in MJCF).
+        # Go1 default_joint_pos == 0 -> raw qpos; read in Go1 MJCF order.
         joint_pos = np.array(
-            [qpos[self._joint_qpos_adr[i]] for i in range(12)],
+            [qpos[self._joint_qpos_adr[p[i]]] for i in range(12)],
             dtype=np.float32,
         )
 
         qvel = mj_data.qvel
         joint_vel = np.array(
-            [qvel[self._joint_qvel_adr[i]] for i in range(12)],
+            [qvel[self._joint_qvel_adr[p[i]]] for i in range(12)],
             dtype=np.float32,
         )
 
@@ -494,7 +507,7 @@ class PhysicsCat:
                 np.asarray(projected_gravity, dtype=np.float32),
                 joint_pos,
                 joint_vel,
-                self._last_action,
+                self._last_action,  # already in Go1 MJCF order (raw policy output)
             ]
         ).astype(np.float32)
         return obs
