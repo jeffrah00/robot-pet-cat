@@ -328,3 +328,19 @@ def _iter_from_name(name: str) -> int:
         return int(tail)
     except ValueError:
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Go1 constants  (base body name differs from Go2; joint defaults are identical)
+# ---------------------------------------------------------------------------
+GO1_BASE_BODY: str = "trunk"
+GO1_DEFAULT_SPAWN_Z: float = 0.278
+
+
+def load_go1_walker_policy(policy_path, device: str = "cpu") -> WalkerPolicy:
+    """Load the Go1 velocity walker (48-dim obs: base_lin_vel replaces phase clock).
+
+    Layout: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)
+            +joint_pos(12)+joint_vel(12)+action(12) = 48
+    """
+    return _load_policy(policy_path, obs_dim=48, device=device)

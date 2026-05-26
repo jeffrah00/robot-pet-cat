@@ -1,0 +1,18 @@
+<!--
+  Per-foot contact sensors for the Go2 MJX scene.
+
+  Sensor names are {foot_site_name}_floor_found = e.g. FR_foot_floor_found,
+  to match what Go1's joystick task constructs at runtime via
+      f"{site}_floor_found"  with site in FEET_SITES.
+
+  Geom1 is the foot geom (FR/FL/RR/RL, names match menagerie). Geom2 is
+  the floor plane from scene_mjx_feetonly_flat_terrain.xml.
+-->
+<mujoco>
+  <sensor>
+    <contact name="FR_foot_floor_found" geom1="FR" geom2="floor" num="1"/>
+    <contact name="FL_foot_floor_found" geom1="FL" geom2="floor" num="1"/>
+    <contact name="RR_foot_floor_found" geom1="RR" geom2="floor" num="1"/>
+    <contact name="RL_foot_floor_found" geom1="RL" geom2="floor" num="1"/>
+  </sensor>
+</mujoco>

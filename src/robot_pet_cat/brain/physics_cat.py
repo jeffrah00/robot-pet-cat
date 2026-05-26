@@ -49,26 +49,27 @@ from .go2_policy import (
     GO2_POLICY_DECIMATION,
     WalkerPolicy,
     load_go2_walker_policy,
+    load_go1_walker_policy,
     load_hind_sit_policy,
     load_get_up_policy,
 )
 
 
 # Default base height at spawn (matches Unitree training init_state, m).
-DEFAULT_BASE_SPAWN_Z = 0.32
+DEFAULT_BASE_SPAWN_Z = 0.278
 
-# Name of the Go2 base body in menagerie's go2_mjx.xml.
-GO2_BASE_BODY = "base_link"
+# Name of the Go1 base body in menagerie's go1.xml.
+GO1_BASE_BODY = "trunk"
 
 
 def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
-    """Patch the menagerie go2_mjx.xml in `assets` to mount a cat_eye camera
-    onto the Go2 base body. Returns the same dict (mutated).
+    """Patch the menagerie go1.xml in `assets` to mount a cat_eye camera
+    onto the Go1 trunk body. Returns the same dict (mutated).
 
     MuJoCo's standalone XML does not let an outer file `re-open` an included
     body by name -- duplicate <body name="base"> raises XML Error. To attach
     a body-mounted POV camera, we inject the <camera> as the first child of
-    the existing <body name="base"...> tag inside go2_mjx.xml's content as
+    the existing <body name="base"...> tag inside go1.xml's content as
     held in the assets dict, then compile from_xml_string with the patched
     asset.
 
@@ -76,7 +77,7 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
     """
     import re
 
-    KEY = "go2_mjx.xml"
+    KEY = "go1.xml"
     if KEY not in assets:
         return assets
     text = assets[KEY].decode("utf-8")
@@ -93,14 +94,14 @@ def inject_cat_eye_camera(assets: dict[str, bytes]) -> dict[str, bytes]:
         'type="sphere" group="2" rgba="1 0.5 0.5 0.6"/>'
     )
     new_text, n = re.subn(
-        r'(<body name="base"[^>]*>)',
+        r'(<body name="trunk"[^>]*>)',
         r'\1' + cam_block,
         text,
         count=1,
     )
     if n == 0:
         raise RuntimeError(
-            "Could not find <body name=\"base\" ...> in go2_mjx.xml to "
+            "Could not find <body name=\"trunk\" ...> in go1.xml to "
             "inject cat_eye camera."
         )
     assets[KEY] = new_text.encode("utf-8")
@@ -150,7 +151,7 @@ class PhysicsCat:
         if callable(policy):
             self.policy: WalkerPolicy = policy
         else:
-            self.policy = load_go2_walker_policy(policy)
+            self.policy = load_go1_walker_policy(policy)
 
         # Optional hind_sit policy: dispatched when a skill emits
         # gait="hind_sit". Same actuator pipeline as the walker (action *
@@ -173,11 +174,11 @@ class PhysicsCat:
             self.get_up_policy = load_get_up_policy(get_up_policy)
         # ---- Index lookups against the compiled MuJoCo model ----------- #
         # Base body and its free-joint qpos/qvel offsets.
-        base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, GO2_BASE_BODY)
+        base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, GO1_BASE_BODY)
         if base_id < 0:
             raise RuntimeError(
-                f"Go2 base body {GO2_BASE_BODY!r} not in compiled model. "
-                "Did the scene <include> go2_mjx.xml?"
+                f"Go1 base body {GO1_BASE_BODY!r} not in compiled model. "
+                "Did the scene <include> go1.xml?"
             )
         self._base_body_id = base_id
         # Find the free joint attached to the base body. There should be
@@ -193,7 +194,7 @@ class PhysicsCat:
                 self._base_qvel_adr = int(mj_model.jnt_dofadr[j])
                 break
         if self._base_qpos_adr < 0:
-            raise RuntimeError("No free joint on Go2 base body in compiled model.")
+            raise RuntimeError("No free joint on Go1 trunk body in compiled model.")
 
         # Leg joint qpos / qvel addresses, in GO2_JOINT_NAMES order.
         self._joint_qpos_adr = np.zeros(12, dtype=np.int32)
@@ -206,7 +207,7 @@ class PhysicsCat:
             self._joint_qvel_adr[i] = int(mj_model.jnt_dofadr[jid])
 
         # Actuator ids, in the same joint order. Actuator names in
-        # menagerie's go2_mjx.xml match the joint names without "_joint":
+        # menagerie's go1.xml match the joint names without "_joint":
         # FR_hip_joint -> FR_hip. Try both spellings.
         self._actuator_ids = np.zeros(12, dtype=np.int32)
         for i, jname in enumerate(GO2_JOINT_NAMES):

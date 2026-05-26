@@ -69,8 +69,8 @@ DEFAULT_SCENE_XML = (
 DEFAULT_PHYSICS_SCENE_XML = (
     Path(__file__).resolve().parents[3]
     / "data"
-    / "go2_scenes"
-    / "living_room_with_go2.xml"
+    / "go1_scenes"
+    / "living_room_with_go1.xml"
 )
 
 HOLD_ACTION = 0
@@ -201,8 +201,8 @@ class BrainEnvConfig:
     # time -- no live swapping.
     use_physics_cat: bool = False
     # Path to the merged scene XML used in physics mode. The default
-    # living_room_with_go2.xml lives under data/go2_scenes/ so its
-    # <include file="go2_mjx.xml"/> resolves through go2_base.get_assets().
+    # living_room_with_go1.xml lives under data/go1_scenes/ so its
+    # <include file="go1.xml"/> resolves through go1_base.get_assets().
     physics_scene_xml: Path = DEFAULT_PHYSICS_SCENE_XML
     # Path to the trained Unitree velocity walker policy. Accepts an
     # .onnx file (preferred), a .pt RSL-RL checkpoint, or a directory
@@ -250,7 +250,7 @@ class BrainEnv:
                 PhysicsCatConfig,
                 inject_cat_eye_camera,
             )
-            from robot_pet_cat.motion.go2_base import get_assets
+            from robot_pet_cat.motion.go1_base import get_assets
 
             xml_str = Path(self.cfg.physics_scene_xml).read_text()
             assets = inject_cat_eye_camera(get_assets())

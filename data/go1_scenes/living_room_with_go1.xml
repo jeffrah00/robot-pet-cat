@@ -1,0 +1,176 @@
+<!--
+  Living room v1 + Go1.  (v1: menagerie go1.xml -- motor actuators
+  with software PD, matching the training environment.)
+
+  Physics: timestep=0.005, integrator=implicitfast, cone=elliptic,
+           impratio=100.
+
+  Sensors: gyro added (go1.xml has none); foot linvel/pos use
+           site objtype (menagerie go1.xml has foot sites, not bodies).
+-->
+<mujoco model="living_room_with_go1_v1">
+  <include file="go1.xml"/>
+
+  <option timestep="0.005" gravity="0 0 -9.81" integrator="implicitfast"
+          cone="elliptic" impratio="100"/>
+
+  <statistic center="0 0 0.3" extent="3.0" meansize=".05"/>
+
+  <visual>
+    <map znear="0.01" zfar="50"/>
+    <quality shadowsize="2048"/>
+    <headlight diffuse="0.55 0.55 0.55" ambient="0.35 0.35 0.35" specular="0 0 0"/>
+    <rgba haze="0.15 0.18 0.22 1"/>
+    <global azimuth="120" elevation="-20" offwidth="1280" offheight="800"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.55 0.65 0.75" rgb2="0.05 0.08 0.12"
+             width="512" height="3072"/>
+    <texture type="2d" name="floor_tex" builtin="checker" mark="edge"
+             rgb1="0.86 0.83 0.78" rgb2="0.78 0.74 0.68" markrgb="0.55 0.5 0.45"
+             width="300" height="300"/>
+    <material name="floor_mat" texture="floor_tex" texuniform="true"
+              texrepeat="5 5" reflectance="0.05"/>
+    <material name="couch_fabric"  rgba="0.45 0.30 0.25 1"/>
+    <material name="couch_cushion" rgba="0.55 0.38 0.30 1"/>
+    <material name="wood_dark"     rgba="0.32 0.22 0.15 1"/>
+    <material name="wood_light"    rgba="0.62 0.48 0.32 1"/>
+    <material name="rug_mat"       rgba="0.78 0.30 0.30 1"/>
+    <material name="rug_border"    rgba="0.55 0.18 0.18 1"/>
+    <material name="wall_mat"      rgba="0.92 0.90 0.86 1"/>
+    <material name="catpost_mat"   rgba="0.55 0.45 0.35 1"/>
+    <material name="cattree_rope"  rgba="0.78 0.65 0.45 1"/>
+    <material name="cattree_top"   rgba="0.65 0.42 0.28 1"/>
+    <material name="bowl_mat"      rgba="0.30 0.45 0.65 1"/>
+    <material name="water_mat"     rgba="0.30 0.55 0.85 0.7"/>
+    <material name="ball_mat"      rgba="0.85 0.22 0.22 1"/>
+    <material name="window_mat"    rgba="1.00 0.95 0.55 0.35"/>
+  </asset>
+
+  <worldbody>
+    <light name="ceiling" pos="0 0 3" dir="0 0 -1" diffuse="0.65 0.65 0.65"/>
+    <light name="window_glow" pos="-2.0 0 1.5" dir="0.4 0 -0.4"
+           diffuse="0.45 0.4 0.25" specular="0.05 0.05 0.05"/>
+
+    <geom name="floor" type="plane" size="3 3 0.05" material="floor_mat"
+          condim="3" friction="0.6" contype="1" conaffinity="1"/>
+
+    <body name="wall_north" pos="0 3 1.2">
+      <geom type="box" size="3 0.05 1.2" material="wall_mat" contype="1" conaffinity="1"/>
+    </body>
+    <body name="wall_south" pos="0 -3 1.2">
+      <geom type="box" size="3 0.05 1.2" material="wall_mat" contype="1" conaffinity="1"/>
+    </body>
+    <body name="wall_east" pos="3 0 1.2">
+      <geom type="box" size="0.05 3 1.2" material="wall_mat" contype="1" conaffinity="1"/>
+    </body>
+    <body name="wall_west" pos="-3 0 1.2">
+      <geom type="box" size="0.05 3 1.2" material="wall_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="couch" pos="0.0 2.3 0.0">
+      <geom name="couch_seat" type="box" pos="0 0 0.22" size="0.70 0.30 0.05"
+            material="couch_cushion" friction="0.9 0.005 0.0001" contype="1" conaffinity="1"/>
+      <geom name="couch_base" type="box" pos="0 0 0.10" size="0.70 0.30 0.10"
+            material="couch_fabric" contype="1" conaffinity="1"/>
+      <geom name="couch_back" type="box" pos="0 0.27 0.45" size="0.70 0.05 0.30"
+            material="couch_fabric" contype="1" conaffinity="1"/>
+      <geom name="couch_arm_l" type="box" pos="-0.72 0 0.32" size="0.06 0.30 0.20"
+            material="couch_fabric" contype="1" conaffinity="1"/>
+      <geom name="couch_arm_r" type="box" pos="+0.72 0 0.32" size="0.06 0.30 0.20"
+            material="couch_fabric" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="coffee_table" pos="0.0 1.3 0.0">
+      <geom name="coffee_top" type="box" pos="0 0 0.40" size="0.45 0.25 0.025"
+            material="wood_dark" contype="1" conaffinity="1"/>
+      <geom name="leg_fl" type="box" pos="-0.40 -0.20 0.20" size="0.025 0.025 0.20"
+            material="wood_dark" contype="1" conaffinity="1"/>
+      <geom name="leg_fr" type="box" pos="+0.40 -0.20 0.20" size="0.025 0.025 0.20"
+            material="wood_dark" contype="1" conaffinity="1"/>
+      <geom name="leg_bl" type="box" pos="-0.40 +0.20 0.20" size="0.025 0.025 0.20"
+            material="wood_dark" contype="1" conaffinity="1"/>
+      <geom name="leg_br" type="box" pos="+0.40 +0.20 0.20" size="0.025 0.025 0.20"
+            material="wood_dark" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="rug" pos="0 0.8 0.005">
+      <geom name="rug_field" type="box" size="1.10 0.80 0.005"
+            material="rug_mat" contype="0" conaffinity="0"/>
+      <geom name="rug_border_n" type="box" pos="0 0.80 0.006" size="1.10 0.05 0.005"
+            material="rug_border" contype="0" conaffinity="0"/>
+      <geom name="rug_border_s" type="box" pos="0 -0.80 0.006" size="1.10 0.05 0.005"
+            material="rug_border" contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="bookshelf" pos="-2.5 1.5 0.0">
+      <geom name="bookshelf_body" type="box" pos="0 0 0.75" size="0.20 0.40 0.75"
+            material="wood_light" contype="1" conaffinity="1"/>
+      <geom name="shelf_1" type="box" pos="0.05 0 0.30" size="0.16 0.38 0.02"
+            material="wood_dark" contype="0" conaffinity="0"/>
+      <geom name="shelf_2" type="box" pos="0.05 0 0.75" size="0.16 0.38 0.02"
+            material="wood_dark" contype="0" conaffinity="0"/>
+      <geom name="shelf_3" type="box" pos="0.05 0 1.20" size="0.16 0.38 0.02"
+            material="wood_dark" contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="cat_tree" pos="-1.5 -1.5 0.0">
+      <geom name="cattree_post" type="cylinder" pos="0 0 0.55" size="0.05 0.55"
+            material="catpost_mat" contype="1" conaffinity="1"/>
+      <geom name="cattree_lvl1" type="box" pos="0.18 0 0.30" size="0.20 0.20 0.025"
+            material="cattree_top" contype="1" conaffinity="1"/>
+      <geom name="cattree_lvl2" type="box" pos="-0.18 0 0.65" size="0.20 0.20 0.025"
+            material="cattree_top" contype="1" conaffinity="1"/>
+      <geom name="cattree_lvl3" type="box" pos="0.0 0 1.00" size="0.22 0.22 0.025"
+            material="cattree_top" contype="1" conaffinity="1"/>
+      <geom name="cattree_rope_a" type="cylinder" pos="0 0 0.15" size="0.07 0.10"
+            material="cattree_rope" contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="scratching_post" pos="1.5 -1.5 0.0">
+      <geom name="scratch_pole" type="cylinder" pos="0 0 0.30" size="0.05 0.30"
+            material="catpost_mat" contype="1" conaffinity="1"/>
+      <geom name="scratch_top" type="sphere" pos="0 0 0.62" size="0.07"
+            material="couch_fabric" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="food_bowl" pos="-2.3 -2.0 0.0">
+      <geom name="food_bowl_geom" type="cylinder" pos="0 0 0.025" size="0.10 0.025"
+            material="bowl_mat" contype="1" conaffinity="1"/>
+    </body>
+    <body name="water_bowl" pos="-2.0 -2.0 0.0">
+      <geom name="water_bowl_geom" type="cylinder" pos="0 0 0.025" size="0.10 0.025"
+            material="bowl_mat" contype="1" conaffinity="1"/>
+      <geom name="water_surface" type="cylinder" pos="0 0 0.045" size="0.085 0.005"
+            material="water_mat" contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="ball" pos="0.0 0.5 0.10">
+      <joint name="ball_joint" type="free"/>
+      <geom name="ball_geom" type="sphere" size="0.06" material="ball_mat"
+            contype="1" conaffinity="1" density="60" friction="0.4 0.005 0.0001"/>
+    </body>
+
+    <site name="window_region" pos="-2.5 0.0 0.01" size="0.45 0.8 0.005"
+          type="box" material="window_mat" group="1"/>
+  </worldbody>
+
+  <sensor>
+    <gyro         name="gyro"          site="imu"/>
+    <velocimeter  name="local_linvel"  site="imu"/>
+    <framezaxis   name="upvector"      objtype="site" objname="imu"/>
+    <framexaxis   name="forwardvector" objtype="site" objname="imu"/>
+    <framepos     name="position"      objtype="site" objname="imu"/>
+    <framelinvel name="FR_foot_global_linvel" objtype="site" objname="FR"/>
+    <framelinvel name="FL_foot_global_linvel" objtype="site" objname="FL"/>
+    <framelinvel name="RR_foot_global_linvel" objtype="site" objname="RR"/>
+    <framelinvel name="RL_foot_global_linvel" objtype="site" objname="RL"/>
+    <framepos    name="FR_foot_pos"           objtype="site" objname="FR"/>
+    <framepos    name="FL_foot_pos"           objtype="site" objname="FL"/>
+    <framepos    name="RR_foot_pos"           objtype="site" objname="RR"/>
+    <framepos    name="RL_foot_pos"           objtype="site" objname="RL"/>
+  </sensor>
+
+  <include file="sensor_feet.xml"/>
+</mujoco>
