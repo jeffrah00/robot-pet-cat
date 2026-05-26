@@ -3,15 +3,16 @@
 Usage (from /workspace/robot-pet-cat):
     source /workspace/mjlab_venv/bin/activate
     MUJOCO_GL=osmesa python scripts/render_lie_down.py \\
-        --policy /workspace/unitree_rl_mjlab/logs/rsl_rl/go2_velocity/2026-05-18_22-14-29/policy.onnx \\
+        --policy /workspace/mjlab_playground/logs/rsl_rl/go1_velocity/2026-05-25_05-54-47/2026-05-25_05-54-47.onnx \\
         --out renders/lie_down_manual_v1.mp4
 
 The script:
-  1. Builds a PhysicsCat-backed BrainEnv (loads walker policy + Go2 model).
-  2. Runs 30 stand ticks to settle (0.6 s sim).
-  3. Runs LieDown.step() for 400 ticks (8 s sim, covers full ramp + hold).
-  4. Renders one frame per tick at 20 fps -> ~14 s wall video.
+    1. Builds a PhysicsCat-backed BrainEnv (loads walker policy + Go1 model).
+    2. Runs 30 stand ticks to settle (0.6 s sim).
+    3. Runs LieDown.step() for 400 ticks (8 s sim, covers full ramp + hold).
+    4. Renders one frame per tick at 20 fps -> ~14 s wall video.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,11 +29,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from robot_pet_cat.brain.env import BrainEnv, BrainEnvConfig
 from robot_pet_cat.skills.lie_down import LieDown
-from robot_pet_cat.skills.skill_policy import LocomotionCommand
+from robot_pet_cat.brain.physics_cat import LocomotionCommand
 
 
-def _log(s: str) -> None:
-    print(f"[render_lie_down] {s}", flush=True)
+def _log(msg: str) -> None:
+    print(f"[render_lie_down]  {msg}", flush=True)
 
 
 def main() -> None:
@@ -66,25 +67,32 @@ def main() -> None:
 
     obs = env.reset()
     mj_model = env.mj_model
-    mj_data = env.mj_data
-    cat = env.cat
-    dt = cfg.dt_s
+    mj_data  = env.mj_data
+    cat      = env.cat
+    dt       = cfg.dt_s
 
     # ------------------------------------------------------------------ #
-    # Renderer
+    # Renderer + tracking camera
     # ------------------------------------------------------------------ #
     renderer = mujoco.Renderer(mj_model, width=args.width, height=args.height)
 
-    # Camera: slightly elevated side-angle view
-    renderer.update_scene(mj_data)
-    cam = renderer.scene.camera[0] if hasattr(renderer.scene, 'camera') else None
+    # Chase camera: track base_link from behind-and-above (same as render_brain_3d)
+    base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    chase = mujoco.MjvCamera()
+    chase.type        = mujoco.mjtCamera.mjCAMERA_TRACKING
+    chase.trackbodyid = base_id
+    chase.distance    = 2.5
+    chase.azimuth     = 120.0
+    chase.elevation   = -20.0
+    chase.lookat[:]   = [0.0, 0.0, 0.20]
+    _log(f"tracking base_link body_id={base_id}, distance={chase.distance}")
 
     frames: list[np.ndarray] = []
     render_every = max(1, round(1.0 / (args.fps * dt)))
     _log(f"render_every={render_every} ticks (dt={dt}s, fps={args.fps})")
 
     def capture() -> None:
-        renderer.update_scene(mj_data)
+        renderer.update_scene(mj_data, camera=chase)
         frames.append(renderer.render().copy())
 
     # ------------------------------------------------------------------ #
@@ -116,6 +124,11 @@ def main() -> None:
     # Write video
     # ------------------------------------------------------------------ #
     _log(f"writing {len(frames)} frames to {out_path} ...")
+    # Sanity-check first frame
+    if frames:
+        f0 = frames[0]
+        _log(f"  frame[0] shape={f0.shape} max={f0.max()} mean={f0.mean():.1f}")
+
     try:
         import mediapy
         mediapy.write_video(str(out_path), frames, fps=args.fps)
