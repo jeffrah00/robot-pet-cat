@@ -327,13 +327,13 @@ class PhysicsCat:
 
         # Default joint angles + zero joint velocities
         for i in range(12):
-            qpos[self._joint_qpos_adr[i]] = float(GO2_DEFAULT_JOINT_POS[i])
+            qpos[self._joint_qpos_adr[i]] = 0.0  # Go1 default is zero
             qvel[self._joint_qvel_adr[i]] = 0.0
 
         # Clear ctrl too (otherwise stale targets from last episode survive).
         mj_data.ctrl[:] = 0.0
         for i in range(12):
-            mj_data.ctrl[self._actuator_ids[i]] = float(GO2_DEFAULT_JOINT_POS[i])
+            mj_data.ctrl[self._actuator_ids[i]] = 0.0  # Go1 default is zero
 
         mujoco.mj_forward(self.mj_model, mj_data)
 
@@ -369,6 +369,8 @@ class PhysicsCat:
             self._last_active_policy = active
             if active == "get_up":
                 self._get_up_substep_counter = 0  # restart settle clock
+                for _i in range(12):  # zero actuator targets for clean get_up handoff
+                    mj_data.ctrl[self._actuator_ids[_i]] = 0.0
                 if hasattr(self.get_up_policy, "reset"):
                     self.get_up_policy.reset()
             elif active == "hind_sit" and hasattr(self.hind_sit_policy, "reset"):

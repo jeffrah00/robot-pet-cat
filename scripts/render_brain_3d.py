@@ -72,11 +72,23 @@ MOOD_NAMES = [
 # --------------------------------------------------------------------------- #
 
 
+
+def _set_fallen_state(mj_model, mj_data, joint_qpos_adrs):
+    """Place robot in training-distribution fallen pose: on back, at rest."""
+    import mujoco as _mj
+    mj_data.qvel[:] = 0.0
+    # ~180-deg rotation about x: quaternion [w=0, x=1, y=0, z=0] = upside-down
+    mj_data.qpos[3:7] = [0.0, 1.0, 0.0, 0.0]
+    mj_data.qpos[2] = 0.20   # approx CoM height when upside-down
+    for adr in joint_qpos_adrs:
+        mj_data.qpos[adr] = 0.0
+    _mj.mj_forward(mj_model, mj_data)
+
 SCRIPTED_SCHEDULE_S = [
     # 2026-05-25 post-Go1 pivot: cycle through the canonical 6-skill set.
     # Skill name appears in HUD; underlying locomotion is the Go2 walker.
     (0.0,  "walk_normal"),   # settle into active walk (knock-down impulse at t=1.0)
-    (3.0,  "get_up"),         # recovery
+    (1.05, "get_up"),       # recovery -- triggers immediately after knock at t=1.0
     (6.0,  "walk_slow"),      # gentle locomotion
     (9.0,  "crouch"),          # alert low posture
     (12.0, "lie_belly"),       # rest on belly
@@ -307,12 +319,9 @@ def main() -> int:
         # action schedule picks up "get_up" at t=2.5s and fires GetUp ->
         # gait="get_up" -> ScriptedGetUpPolicy in PhysicsCat.
         if args.knock_down and not knock_done and env.t_sim >= 1.0:
-            vadr = env.cat._base_qvel_adr
-            env.mj_data.qvel[vadr + 0] = 0.5   # small forward push
-            env.mj_data.qvel[vadr + 2] = 1.2   # small upward kick
-            env.mj_data.qvel[vadr + 3] = 12.0  # roll rate about body +x
+            _set_fallen_state(env.mj_model, env.mj_data, env.cat._joint_qpos_adr)
             knock_done = True
-            _log(f"  knocked cat down at t={env.t_sim:.2f}s")
+            _log(f" placed cat in fallen state at t={env.t_sim:.2f}s")
         if ppo_model is not None:
             flat_obs = obs_dict_to_curiosity_vec(obs)
             action, _ = ppo_model.predict(flat_obs, deterministic=False)
