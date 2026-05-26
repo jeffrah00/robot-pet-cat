@@ -87,8 +87,9 @@ def _set_fallen_state(mj_model, mj_data, joint_qpos_adrs):
 SCRIPTED_SCHEDULE_S = [
     # 2026-05-25 post-Go1 pivot: cycle through the canonical 6-skill set.
     # Skill name appears in HUD; underlying locomotion is the Go2 walker.
-    (0.0,  "walk_normal"),   # settle into active walk (knock-down impulse at t=1.0)
-    (1.05, "get_up"),       # recovery -- triggers immediately after knock at t=1.0
+    (0.0,  "get_up"),       # lead with get_up; knock-down fires at t=1.0 so
+                            # the policy has something to recover from
+    (1.05, "get_up"),       # explicit re-entry right after knock at t=1.0
     (6.0,  "walk_slow"),      # gentle locomotion
     (9.0,  "crouch"),          # alert low posture
     (12.0, "lie_belly"),       # rest on belly
@@ -386,8 +387,4 @@ def main() -> int:
         writer.append_data(canvas)
 
     writer.close()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    retur
