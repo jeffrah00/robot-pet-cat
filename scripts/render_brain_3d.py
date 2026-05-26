@@ -387,4 +387,8 @@ def main() -> int:
         writer.append_data(canvas)
 
     writer.close()
-    retur
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
