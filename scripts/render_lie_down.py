@@ -77,7 +77,8 @@ def main() -> None:
     renderer = mujoco.Renderer(mj_model, width=args.width, height=args.height)
 
     # Chase camera: track base_link from behind-and-above (same as render_brain_3d)
-    base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    _base_name = "trunk" if mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "trunk") >= 0 else "base_link"
+    base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, _base_name)
     chase = mujoco.MjvCamera()
     chase.type        = mujoco.mjtCamera.mjCAMERA_TRACKING
     chase.trackbodyid = base_id
@@ -85,7 +86,7 @@ def main() -> None:
     chase.azimuth     = 120.0
     chase.elevation   = -20.0
     chase.lookat[:]   = [0.0, 0.0, 0.20]
-    _log(f"tracking base_link body_id={base_id}, distance={chase.distance}")
+    _log(f"tracking {_base_name} body_id={base_id}, distance={chase.distance}")
 
     frames: list[np.ndarray] = []
     render_every = max(1, round(1.0 / (args.fps * dt)))
