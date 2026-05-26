@@ -492,29 +492,24 @@ class PhysicsCat:
         return obs
 
     def _build_observation(self, mj_data, cmd_arr: np.ndarray) -> np.ndarray:
-        """Build the 47-dim obs the flat velocity walker was trained against."""
-        # 1. base_ang_vel (3) -- gyro reading.
+        """Build 48-dim obs for Go1 flat velocity walker.
+
+        Layout: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)
+                +joint_pos(12)+joint_vel(12)+action(12) = 48
+        """
+        # 1. base_lin_vel (3) -- root translational velocity in body frame.
+        # qvel[0:3] is world-frame linear velocity of the free joint.
+        xmat = np.asarray(mj_data.xmat[self._base_body_id]).reshape(3, 3)
+        base_lin_vel = (xmat.T @ mj_data.qvel[:3]).astype(np.float32)
+
+        # 2. base_ang_vel (3) -- gyro reading.
         base_ang_vel = mj_data.sensordata[self._gyro_adr : self._gyro_adr + 3]
 
-        # 2. projected_gravity (3): world gravity (0,0,-1) expressed in
-        # body frame. xmat is R_world<-body (column i = i-th body axis in
-        # world coords). To rotate a world-frame vector into body coords,
-        # premultiply by R^T, so projected_gravity = R^T @ [0,0,-1] =
-        # -R[2,:] (third ROW of xmat, NOT third column).
-        xmat = np.asarray(mj_data.xmat[self._base_body_id]).reshape(3, 3)
+        # 3. projected_gravity (3): -R[2,:] (third ROW of xmat)
         projected_gravity = -xmat[2, :]
 
-        # 3. command (3): the velocity twist [vx, vy, yaw_rate].
+        # 4. command (3): the velocity twist [vx, vy, yaw_rate].
         command = cmd_arr
-
-        # 4. phase (2): [sin, cos] of 2*pi * (t/period), gated by command
-        # magnitude.
-        cmd_norm = float(np.linalg.norm(command))
-        if cmd_norm < self.cfg.phase_stand_threshold:
-            phase = np.zeros(2, dtype=np.float32)
-        else:
-            theta = 2.0 * math.pi * (self._phase_time / self.cfg.phase_period)
-            phase = np.array([math.sin(theta), math.cos(theta)], dtype=np.float32)
 
         # 5. joint_pos (12): q - q_default
         qpos = mj_data.qpos
@@ -533,13 +528,13 @@ class PhysicsCat:
         # 7. last_action (12)
         last_action = self._last_action
 
-        # 47-dim: base_ang_vel(3)+proj_grav(3)+cmd(3)+phase(2)+joint_pos(12)+joint_vel(12)+action(12)
+        # 48-dim: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)+joint_pos(12)+joint_vel(12)+action(12)
         obs = np.concatenate(
             [
+                base_lin_vel,
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
                 command,
-                phase,
                 joint_pos,
                 joint_vel,
                 last_action,
