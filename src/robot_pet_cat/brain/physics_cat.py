@@ -243,6 +243,9 @@ class PhysicsCat:
         # switching between walker and hind_sit (the two policies have
         # different action distributions; a stale last_action is OOD).
         self._last_active_policy = "walker"
+        # Settle-step counter for the get_up policy (trained at 8 Hz,
+        # settle_steps=25 vs walker decimation=4 at 50 Hz).
+        self._get_up_substep_counter: int = 0
 
         # ---- v7/FR-Net adapter: foot-geom IDs for predicted_next_contact ---- #
         # When get_up_policy.obs_dim == 46 the policy expects 4 extra contact
@@ -364,8 +367,10 @@ class PhysicsCat:
         if active != self._last_active_policy:
             self._last_action = np.zeros(12, dtype=np.float32)
             self._last_active_policy = active
-            if active == "get_up" and hasattr(self.get_up_policy, "reset"):
-                self.get_up_policy.reset()
+            if active == "get_up":
+                self._get_up_substep_counter = 0  # restart settle clock
+                if hasattr(self.get_up_policy, "reset"):
+                    self.get_up_policy.reset()
             elif active == "hind_sit" and hasattr(self.hind_sit_policy, "reset"):
                 self.hind_sit_policy.reset()
 
@@ -373,10 +378,17 @@ class PhysicsCat:
         cmd_arr = self._command_to_twist(cmd)
         self._last_cmd_arr = cmd_arr
 
+        # go1_getup was trained with settle_steps=25 (8 Hz policy rate).
+        # Walker/hind_sit use decimation=4 (50 Hz). Use a settle counter.
+        GET_UP_SETTLE_STEPS = 25
         n_substeps = max(1, int(round(dt / self.cfg.physics_dt)))
         for substep in range(n_substeps):
-            # Re-query the active policy every `decimation` physics substeps.
-            if substep % self.cfg.decimation == 0:
+            # Re-query the active policy at the correct rate.
+            if use_get_up:
+                query = (self._get_up_substep_counter % GET_UP_SETTLE_STEPS == 0)
+            else:
+                query = (substep % self.cfg.decimation == 0)
+            if query:
                 if use_hind_sit:
                     obs = self._build_hind_sit_observation(mj_data)
                     action = self.hind_sit_policy(obs[None, :])[0]
@@ -387,25 +399,22 @@ class PhysicsCat:
                     obs = self._build_observation(mj_data, cmd_arr)
                     action = self.policy(obs[None, :])[0]
                 self._last_action = np.asarray(action, dtype=np.float32)
-                # Joint targets = default + scale * action, in MJCF order.
-                # Both policies use the same action_scale and default pose.
-                # If cmd.joint_targets is set, bypass policy and drive
-                # actuators directly (manual PD skills like lie_down).
+                # If cmd.joint_targets is set, bypass policy (manual PD skills).
                 if cmd.joint_targets is not None:
                     targets = np.asarray(cmd.joint_targets, dtype=np.float32)
                 elif use_get_up:
-                    # go1_getup actions are in Go1 MJCF order: FR,FL,RR,RL
-                    # _actuator_ids is in GO2_JOINT_NAMES order: FL,FR,RL,RR
-                    # Permutation maps Go1 policy index -> PhysicsCat internal index
+                    # go1_getup: base=zeros (Go1 default), scale=0.6
+                    # Permute action from Go1 MJCF order to PhysicsCat phys order
                     _GO1_PERM = (3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8)
                     targets = np.zeros(12, dtype=np.float32)
                     for _k in range(12):
                         targets[_GO1_PERM[_k]] = 0.6 * self._last_action[_k]
                 else:
-                    # walker / hind_sit (Go2): base = GO2_DEFAULT_JOINT_POS
                     targets = GO2_DEFAULT_JOINT_POS + self.cfg.action_scale * self._last_action
                 for i in range(12):
                     mj_data.ctrl[self._actuator_ids[i]] = float(targets[i])
+            if use_get_up:
+                self._get_up_substep_counter += 1
 
             mujoco.mj_step(self.mj_model, mj_data)
 
@@ -446,12 +455,7 @@ class PhysicsCat:
         return out
 
     def _build_get_up_observation(self, mj_data) -> np.ndarray:
-        """Get_up obs sized to match the loaded policy.
-
-        Routes to _build_go1_getup_observation (42-dim, Go1 MJCF joint order)
-        for the mjlab Unitree-Go1-Getup-Flat policy.  For 46-dim FR-Net
-        policies (v7+), appends 4 real foot-contact bits.
-        """
+        """Get_up obs sized to match the loaded policy (Go1 MJCF joint order)."""
         base = self._build_go1_getup_observation(mj_data)  # 42-dim, Go1 MJCF order
         target_dim = getattr(self.get_up_policy, "obs_dim", 42)
         if target_dim == 42:
@@ -463,22 +467,18 @@ class PhysicsCat:
             f"get_up policy has unsupported obs_dim={target_dim}; expected 42 or 46"
         )
 
-    # Joint permutation: Go1 MJCF order (FR,FL,RR,RL) -> PhysicsCat GO2_JOINT_NAMES order (FL,FR,RL,RR)
-    # go1_getup and go1_walker train with joints indexed in MJCF natural order.
-    # PhysicsCat indexes _joint_qpos_adr / _actuator_ids in GO2_JOINT_NAMES order.
-    # This permutation p satisfies: phys_index[k] = GO1_TO_PHYS_PERM[k] for go1_joint k.
-    # The permutation is its own inverse (swapping FL<->FR and RL<->RR leg pairs).
+    # Joint permutation: Go1 MJCF natural order (FR,FL,RR,RL)
+    # -> PhysicsCat GO2_JOINT_NAMES order (FL,FR,RL,RR).
+    # Self-inverse permutation (swapping front/rear leg pairs).
     _GO1_TO_PHYS_PERM = (3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8)
 
     def _build_go1_getup_observation(self, mj_data) -> np.ndarray:
         """42-dim obs for the mjlab Unitree-Go1-Getup-Flat policy.
 
-        go1_getup uses joint_pos_rel(biased=True).  Go1 MJCF has no keyframe
-        so default_joint_pos == zeros -> joint_pos = raw qpos.
-
-        Crucially, mjlab iterates joints in MJCF natural order: FR,FL,RR,RL.
-        PhysicsCat stores _joint_qpos_adr in GO2_JOINT_NAMES order: FL,FR,RL,RR.
-        We apply _GO1_TO_PHYS_PERM to read qpos/qvel in the order the policy expects.
+        Go1 MJCF has no keyframe -> default_joint_pos == 0 -> joint_pos = raw qpos.
+        mjlab iterates joints in MJCF order: FR, FL, RR, RL.
+        PhysicsCat _joint_qpos_adr is in GO2_JOINT_NAMES order: FL, FR, RL, RR.
+        _GO1_TO_PHYS_PERM corrects the indexing so obs matches training.
 
         Layout: base_ang_vel(3) + proj_grav(3) + joint_pos(12)
                 + joint_vel(12) + last_action(12) = 42
@@ -489,25 +489,22 @@ class PhysicsCat:
 
         p = self._GO1_TO_PHYS_PERM
         qpos = mj_data.qpos
-        # Go1 default_joint_pos == 0 -> raw qpos; read in Go1 MJCF order.
         joint_pos = np.array(
             [qpos[self._joint_qpos_adr[p[i]]] for i in range(12)],
             dtype=np.float32,
         )
-
         qvel = mj_data.qvel
         joint_vel = np.array(
             [qvel[self._joint_qvel_adr[p[i]]] for i in range(12)],
             dtype=np.float32,
         )
-
         obs = np.concatenate(
             [
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
                 joint_pos,
                 joint_vel,
-                self._last_action,  # already in Go1 MJCF order (raw policy output)
+                self._last_action,  # raw policy output, in Go1 MJCF order
             ]
         ).astype(np.float32)
         return obs
