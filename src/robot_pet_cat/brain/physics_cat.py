@@ -690,21 +690,7 @@ class PhysicsCat:
         # 3. command (3): the velocity twist [vx, vy, yaw_rate].
         command = cmd_arr
 
-        # 4. phase (2): sin/cos clock, zeroed when standing (matches training).
-        cmd_norm = float(np.linalg.norm(cmd_arr))
-        if cmd_norm < self.cfg.phase_stand_threshold:
-            phase = np.zeros(2, dtype=np.float32)
-        else:
-            phase_frac = self._phase_time / self.cfg.phase_period
-            phase = np.array(
-                [
-                    np.sin(2.0 * np.pi * phase_frac),
-                    np.cos(2.0 * np.pi * phase_frac),
-                ],
-                dtype=np.float32,
-            )
-
-        # 5. joint_pos (12): q - q_default, in Go1 MJCF order.
+        # 4. joint_pos (12): q - q_default, in Go1 MJCF order.
         p = self._GO1_TO_PHYS_PERM
         qpos = mj_data.qpos
         joint_pos = np.array(
@@ -713,30 +699,30 @@ class PhysicsCat:
             dtype=np.float32,
         )
 
-        # 6. joint_vel (12), in Go1 MJCF order.
+        # 5. joint_vel (12), in Go1 MJCF order.
         qvel = mj_data.qvel
         joint_vel = np.array(
             [qvel[self._joint_qvel_adr[p[i]]] for i in range(12)],
             dtype=np.float32,
         )
 
-        # 7. last_action (12), already in Go1 MJCF order (raw policy output).
+        # 6. last_action (12), already in Go1 MJCF order (raw policy output).
         last_action = self._last_action
 
-        # 8. body_height_cmd (1): height offset command -- not used, hold at 0.
-        body_height_cmd = np.zeros(1, dtype=np.float32)
+        # 7. local_linvel (3): body-frame linear velocity (velocimeter).
+        local_linvel = mj_data.sensordata[self._linvel_adr : self._linvel_adr + 3]
 
-        # 48-dim: base_ang_vel(3)+proj_grav(3)+cmd(3)+phase(2)+joint_pos(12)+joint_vel(12)+action(12)+body_height_cmd(1)
+        # 48-dim: local_linvel(3)+gyro(3)+proj_grav(3)+joint_pos(12)+joint_vel(12)+last_act(12)+cmd(3)
+        # Matches joystick.py _get_obs actor state layout used during training.
         obs = np.concatenate(
             [
+                np.asarray(local_linvel, dtype=np.float32),
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
-                command,
-                phase,
                 joint_pos,
                 joint_vel,
                 last_action,
-                body_height_cmd,
+                command,
             ]
         ).astype(np.float32)
         return obs
