@@ -5,10 +5,8 @@ env:
   episode_length_s: 120
   decision_period_s: 2.0       # brain queried every 2 seconds of sim time
   skills:                      # registry of mid-level skills available
-    # 2026-05-27: canonical 6-skill set (lie_side removed).
-    - get_up
-    - walk_normal
-    - walk_slow
+    # 2026-05-27: canonical 4-skill set.
+    - walk
     - crouch
     - lie_belly
     - stay

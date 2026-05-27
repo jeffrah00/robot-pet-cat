@@ -64,46 +64,40 @@ class Attractor(str, Enum):
 # `walk_to` and `look_at` appear in many modes because they're general-purpose
 # competence skills, not character-defining.
 #
-# 2026-05-23 revision: per-mode allow-lists redistributed across all 15
-# SKILL_NAMES entries. Three universal skills appear in every mode:
-#   - get_up      : recovery from fall (mode-agnostic, the original gap)
-#   - stand       : default upright posture / transition state
-#   - look_at     : visual attention is always available to a cat
-# All other skills land in the mode(s) where they fit the mode's character.
+# 2026-05-27 revision: skill set reduced to 4 canonical skills:
+#   walk, crouch, lie_belly, stay
+# All other skills (get_up, walk_slow, walk_normal, lie_side) removed.
+# `stay` appears in modes where stillness is iconic (RESTING, OBSERVING,
+# STALKING, GROOMING) and is omitted from motion-dominant modes
+# (PLAYING, EXPLORING).
 # MODE_HARD_BLOCKED (below) still denies locomotion during rest/groom even
 # when soft-pass would let it through.
 MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
-    # 2026-05-26 update: project pivoted to Go1 + mjlab_playground. The
-    # canonical set is 6 skills now (5 mjlab + manual `stay`). get_up is
-    # universal across modes as the recovery skill; `stay` (freeze current
-    # pose) appears in modes where stillness is iconic (RESTING, OBSERVING,
-    # STALKING, GROOMING) and is omitted from motion-dominant modes
-    # (PLAYING, EXPLORING). See [[project_pivot_to_go1]] for context.
-    # 2026-05-27: lie_side removed from skill set.
+    # 2026-05-27 update: canonical 4-skill set (walk, crouch, lie_belly, stay).
     #
-    # Settled, low energy. Lying poses + low alert + recovery.
+    # Settled, low energy. Lying poses + low alert.
     Attractor.RESTING:   (
-        "lie_belly", "crouch", "get_up", "stay",
+        "lie_belly", "crouch", "stay",
     ),
-    # Alert but not pursuing. Stationary low watch + slow approach + recovery.
+    # Alert but not pursuing. Stationary low watch + approach.
     Attractor.OBSERVING: (
-        "crouch", "walk_slow", "get_up", "stay",
+        "crouch", "walk", "stay",
     ),
-    # Pre-pounce, locked on something. Low ready pose + slow creep.
+    # Pre-pounce, locked on something. Low ready pose + creep.
     Attractor.STALKING:  (
-        "crouch", "walk_slow", "get_up", "stay",
+        "crouch", "walk", "stay",
     ),
-    # Active engagement with a play target. Brisk locomotion + slow stalking.
+    # Active engagement with a play target. Brisk locomotion.
     Attractor.PLAYING:   (
-        "walk_normal", "walk_slow", "get_up",
+        "walk", "crouch",
     ),
     # Static / quiet self-care. Mirrors resting; mood distinguishes.
     Attractor.GROOMING:  (
-        "lie_belly", "crouch", "get_up", "stay",
+        "lie_belly", "crouch", "stay",
     ),
     # Locomotion-dominant, low-engagement wandering.
     Attractor.EXPLORING: (
-        "walk_normal", "walk_slow", "get_up",
+        "walk", "crouch",
     ),
 }
 
@@ -112,8 +106,8 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
 # semantic contract of resting/grooming modes too severely to allow even
 # occasionally.
 MODE_HARD_BLOCKED: dict[Attractor, frozenset[str]] = {
-    Attractor.RESTING:  frozenset({"walk_normal", "walk_slow"}),
-    Attractor.GROOMING: frozenset({"walk_normal", "walk_slow"}),
+    Attractor.RESTING:  frozenset({"walk"}),
+    Attractor.GROOMING: frozenset({"walk"}),
 }
 
 
