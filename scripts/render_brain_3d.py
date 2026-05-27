@@ -93,7 +93,6 @@ SCRIPTED_SCHEDULE_S = [
     (1.05,  "walk"),        # re-assert walk after knock-down; guard forces crouch
     (11.0,  "crouch"),      # explicit crouch posture after recovery
     (15.0,  "lie_belly"),   # lie on belly
-    (19.0,  "lie_side"),    # lie on side
     (23.0,  "stay"),        # stay still
 ]
 
@@ -251,11 +250,6 @@ def main() -> int:
         help="Mjlab-LieBelly-Flat-Unitree-Go1 checkpoint.",
     )
     p.add_argument(
-        "--lie-side-checkpoint",
-        default="models/mjlab_go1_lie_side.pt",
-        help="Mjlab-LieSide-Flat-Unitree-Go1 checkpoint.",
-    )
-    p.add_argument(
         "--knock-down", action="store_true",
         help="At sim t=1.0s, apply an angular impulse to roll the cat onto "
         "its side so the scripted get_up has something to recover from.",
@@ -331,7 +325,6 @@ def main() -> int:
         walker_slow_policy_path=Path(args.walker_slow_checkpoint),
         crouch_policy_path=Path(args.crouch_checkpoint),
         lie_belly_policy_path=Path(args.lie_belly_checkpoint),
-        lie_side_policy_path=Path(args.lie_side_checkpoint),
     )
     _log("building BrainEnv with PhysicsCat (this loads the walker)...")
     t0 = time.perf_counter()

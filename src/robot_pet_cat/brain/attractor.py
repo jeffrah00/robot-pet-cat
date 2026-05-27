@@ -82,7 +82,7 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
     #
     # Settled, low energy. Lying poses + low alert + recovery.
     Attractor.RESTING:   (
-        "lie_belly", "lie_side", "crouch", "get_up", "stay",
+        "lie_belly", "crouch", "get_up", "stay",
     ),
     # Alert but not pursuing. Stationary low watch + slow approach + recovery.
     Attractor.OBSERVING: (
@@ -98,7 +98,7 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
     ),
     # Static / quiet self-care. Mirrors resting; mood distinguishes.
     Attractor.GROOMING:  (
-        "lie_belly", "lie_side", "crouch", "get_up", "stay",
+        "lie_belly", "crouch", "get_up", "stay",
     ),
     # Locomotion-dominant, low-engagement wandering.
     Attractor.EXPLORING: (

@@ -22,7 +22,6 @@ from typing import Any
 from .crouch import Crouch
 from .hind_sit import HindSit
 from .lie_belly import LieBelly
-from .lie_side import LieSide
 from .look_at import LookAt
 from .sit import Sit
 from .skill_policy import Skill
@@ -53,7 +52,6 @@ def _build_skills() -> dict[str, Skill]:
             "walk": Walk(),           # forward velocity ~1.0 m/s
         "crouch": Crouch(),
         "lie_belly": LieBelly(),   # prone sphinx/loaf pose
-        "lie_side": LieSide(),     # side-lying pose (right side down)
         "stay": Stay(),            # freeze current joint config
     }
 
@@ -64,7 +62,6 @@ SKILL_NAMES: tuple[str, ...] = (
     "walk",
     "crouch",
     "lie_belly",
-    "lie_side",
     "stay",
 )
 

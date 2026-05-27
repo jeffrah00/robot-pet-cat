@@ -142,7 +142,6 @@ class PhysicsCat:
         walker_slow_policy: "WalkerPolicy | str | Path | None" = None,
         crouch_policy: "WalkerPolicy | str | Path | None" = None,
         lie_belly_policy: "WalkerPolicy | str | Path | None" = None,
-        lie_side_policy: "WalkerPolicy | str | Path | None" = None,
     ) -> None:
         import mujoco
 
@@ -196,7 +195,6 @@ class PhysicsCat:
             return load_get_up_policy(p)
         self.crouch_policy = _maybe_load_posture(crouch_policy)
         self.lie_belly_policy = _maybe_load_posture(lie_belly_policy)
-        self.lie_side_policy = _maybe_load_posture(lie_side_policy)
         # ---- Index lookups against the compiled MuJoCo model ----------- #
         # Base body and its free-joint qpos/qvel offsets.
         base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, GO1_BASE_BODY)
@@ -392,7 +390,6 @@ class PhysicsCat:
             "get_up": self.get_up_policy,
             "crouch": self.crouch_policy,
             "lie_belly": self.lie_belly_policy,
-            "lie_side": self.lie_side_policy,
         }
         use_posture = (
             cmd.gait in posture_policies and posture_policies[cmd.gait] is not None

@@ -136,7 +136,7 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
     xy target or a per-entity goal — None is the right answer for all.
     """
     del scene_state, cat_xy  # unused after pivot
-    if skill_name in ("walk", "crouch", "lie_belly", "lie_side", "stay"):
+    if skill_name in ("walk", "crouch", "lie_belly", "stay"):
         return None
     raise KeyError(f"no default goal recipe for skill {skill_name!r}")
 
@@ -214,7 +214,6 @@ class BrainEnvConfig:
     walker_slow_policy_path: Optional[Path] = None
     crouch_policy_path: Optional[Path] = None
     lie_belly_policy_path: Optional[Path] = None
-    lie_side_policy_path: Optional[Path] = None
     # Spawn height for the Go2 base body at reset. 0.32 matches the
     # init_state z in unitree_rl_mjlab's training config.
     physics_spawn_z: float = 0.32
@@ -269,7 +268,6 @@ class BrainEnv:
                 walker_slow_policy=self.cfg.walker_slow_policy_path,
                 crouch_policy=self.cfg.crouch_policy_path,
                 lie_belly_policy=self.cfg.lie_belly_policy_path,
-                lie_side_policy=self.cfg.lie_side_policy_path,
             )
         else:
             self.mj_model = mujoco.MjModel.from_xml_path(str(self.cfg.scene_xml))
