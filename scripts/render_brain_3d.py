@@ -85,18 +85,14 @@ def _set_fallen_state(mj_model, mj_data, joint_qpos_adrs):
     _mj.mj_forward(mj_model, mj_data)
 
 SCRIPTED_SCHEDULE_S = [
-    # 2026-05-27 post-Go1 pivot: cycle through the canonical 6-skill set.
-    # Skill name appears in HUD; underlying locomotion uses Go1 mjlab
-    # walkers + the 3 mjlab posture policies + the keyframe lie_belly
-    # ramp + the new `stay` freeze. lie_side removed.
-    (0.0,  "get_up"),       # lead with get_up; knock-down fires at t=1.0 so
-                            # the policy has something to recover from
-    (1.05, "get_up"),       # explicit re-entry right after knock at t=1.0
-    (4.0,  "stay"),         # freeze the post-recovery pose for ~2s
-    (6.0,  "walk_slow"),    # gentle locomotion
-    (9.0,  "crouch"),       # alert low posture
+    # 2026-05-27: canonical 4-skill set (walk, crouch, lie_belly, stay).
+    # get_up, walk_slow, lie_side all removed. crouch is universal recovery.
+    (0.0,  "stay"),         # start standing still
+    (3.0,  "walk"),         # locomotion
+    (8.0,  "crouch"),       # alert low posture / recovery
     (12.0, "lie_belly"),    # rest on belly
-    (15.0, "walk_normal"),  # back to active
+    (16.0, "stay"),         # freeze pose
+    (19.0, "walk"),         # back to active
 ]
 
 
@@ -232,17 +228,6 @@ def main() -> int:
         "ScriptedGetUpPolicy (deterministic joint-angle ramp).",
     )
     p.add_argument(
-        "--get-up-checkpoint",
-        default="models/mjlab_go1_getup.pt",
-        help="Path to the trained get_up policy. Ignored when "
-        "--scripted-get-up is set.",
-    )
-    p.add_argument(
-        "--walker-slow-checkpoint",
-        default="models/mjlab_go1_walker_slow.pt",
-        help="Slow-walker policy (Mjlab-Velocity-Slow-Unitree-Go1).",
-    )
-    p.add_argument(
         "--crouch-checkpoint",
         default="models/mjlab_go1_crouch.pt",
         help="Mjlab-Crouch-Flat-Unitree-Go1 checkpoint.",
@@ -324,8 +309,6 @@ def main() -> int:
         decision_period_min_steps=40,
         decision_period_max_steps=120,
         hind_sit_policy_path=Path("models/hind_sit_v1.pt"),
-        get_up_policy_path=get_up_obj,
-        walker_slow_policy_path=Path(args.walker_slow_checkpoint),
         crouch_policy_path=Path(args.crouch_checkpoint),
         lie_belly_policy_path=Path(args.lie_belly_checkpoint),
     )

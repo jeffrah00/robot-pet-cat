@@ -130,15 +130,12 @@ def _nearest_entity(scene_state: SceneState, cat_xy, **flag_filter):
 def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarray):
     """Choose a sensible goal for a skill from scene + cat position.
 
-    2026-05-25: post-Go1 pivot, every skill in the canonical set is
-    either a static posture (crouch, lie_belly, get_up) or pure
-    velocity locomotion (walk_normal, walk_slow). None of them need an
-    xy target or a per-entity goal — None is the right answer for all.
-    2026-05-27: lie_side removed.
+    2026-05-27: canonical 4-skill set (walk, crouch, lie_belly, stay).
+    All are either static postures or pure velocity locomotion —
+    None is the right answer for all.
     """
     del scene_state, cat_xy  # unused after pivot
-    if skill_name in ("get_up", "walk_normal", "walk_slow",
-                       "crouch", "lie_belly", "stay"):
+    if skill_name in ("walk", "crouch", "lie_belly", "stay"):
         return None
     raise KeyError(f"no default goal recipe for skill {skill_name!r}")
 
@@ -211,9 +208,7 @@ class BrainEnvConfig:
     walker_policy_path: Optional[Path] = None
     # Paths to optional specialty policies (42-dim obs, no command/phase).
     hind_sit_policy_path: Optional[Path] = None
-    get_up_policy_path: Optional[Path] = None
     # Additional mjlab Go1 checkpoints (all derived from Mjlab-*-Flat-Unitree-Go1).
-    walker_slow_policy_path: Optional[Path] = None
     crouch_policy_path: Optional[Path] = None
     lie_belly_policy_path: Optional[Path] = None
     # Spawn height for the Go2 base body at reset. 0.32 matches the
@@ -266,8 +261,6 @@ class BrainEnv:
                 self.cfg.walker_policy_path,
                 PhysicsCatConfig(spawn_z=self.cfg.physics_spawn_z),
                 hind_sit_policy=self.cfg.hind_sit_policy_path,
-                get_up_policy=self.cfg.get_up_policy_path,
-                walker_slow_policy=self.cfg.walker_slow_policy_path,
                 crouch_policy=self.cfg.crouch_policy_path,
                 lie_belly_policy=self.cfg.lie_belly_policy_path,
             )

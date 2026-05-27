@@ -138,8 +138,6 @@ class PhysicsCat:
         policy: WalkerPolicy | str | Path,
         cfg: Optional[PhysicsCatConfig] = None,
         hind_sit_policy: "WalkerPolicy | str | Path | None" = None,
-        get_up_policy: "WalkerPolicy | str | Path | None" = None,
-        walker_slow_policy: "WalkerPolicy | str | Path | None" = None,
         crouch_policy: "WalkerPolicy | str | Path | None" = None,
         lie_belly_policy: "WalkerPolicy | str | Path | None" = None,
     ) -> None:
@@ -167,23 +165,10 @@ class PhysicsCat:
         else:
             self.hind_sit_policy = load_hind_sit_policy(hind_sit_policy)
 
-        # Optional get_up policy: dispatched when a skill emits gait="get_up".
-        # Same 42-dim obs as hind_sit (no command/phase channels).
-        if get_up_policy is None:
-            self.get_up_policy = None
-        elif callable(get_up_policy):
-            self.get_up_policy = get_up_policy
-        else:
-            self.get_up_policy = load_get_up_policy(get_up_policy)
-
-        # Optional slow walker: 48-dim like the normal walker but trained
-        # with a slower command range (Mjlab-Velocity-Slow-Unitree-Go1).
-        if walker_slow_policy is None:
-            self.walker_slow_policy = None
-        elif callable(walker_slow_policy):
-            self.walker_slow_policy = walker_slow_policy
-        else:
-            self.walker_slow_policy = load_go1_walker_policy(walker_slow_policy)
+        # get_up and walker_slow removed from skill set (2026-05-27).
+        # crouch is now the universal recovery skill.
+        self.get_up_policy = None
+        self.walker_slow_policy = None
 
         # Posture policies: 42-dim, same FR/FL/RR/RL MJCF joint order as
         # get_up, same action_scale=0.6 and settle_steps=25. Forks of the
@@ -386,16 +371,13 @@ class PhysicsCat:
         # Walker policies (normal + slow) are 48-dim, decimation=4 (50Hz).
         posture_policies = {
             "hind_sit": self.hind_sit_policy,
-            "get_up": self.get_up_policy,
             "crouch": self.crouch_policy,
             "lie_belly": self.lie_belly_policy,
         }
         use_posture = (
             cmd.gait in posture_policies and posture_policies[cmd.gait] is not None
         )
-        use_slow_walker = (
-            cmd.gait == "walk_slow" and self.walker_slow_policy is not None
-        )
+        use_slow_walker = False  # walk_slow removed from skill set
         use_stay = (cmd.gait == "stay")
         # Back-compat names used downstream.
         use_hind_sit = (cmd.gait == "hind_sit") and (self.hind_sit_policy is not None)

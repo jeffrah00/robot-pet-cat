@@ -45,13 +45,13 @@ def _build_skills() -> dict[str, Skill]:
     `.reset()` on transitions.
 
     2026-05-25: project pivoted to Go1 + mjlab_playground recipes.
-    2026-05-27: lie_side removed; canonical set is now 6 skills.
+    2026-05-27: get_up, walk_slow, lie_side removed. crouch is now
+    the universal recovery skill. walk (Walk class) is the sole
+    locomotion skill. Canonical set is 4 skills.
     """
     return {
-        "get_up": GetUp(),
-        "walk_normal": Walk(),     # forward velocity ~1.0 m/s
-        "walk_slow": Prowl(),      # slow forward velocity
-        "crouch": Crouch(),
+        "walk": Walk(),            # forward velocity ~1.0 m/s
+        "crouch": Crouch(),        # low posture + universal recovery
         "lie_belly": LieBelly(),   # prone sphinx/loaf pose
         "stay": Stay(),            # freeze current joint config
     }
@@ -60,9 +60,7 @@ def _build_skills() -> dict[str, Skill]:
 # Stable insertion order — DON'T reorder; brain checkpoints encode integer
 # indices that map back through SKILL_NAMES. New skills append to the end.
 SKILL_NAMES: tuple[str, ...] = (
-    "get_up",
-    "walk_normal",
-    "walk_slow",
+    "walk",
     "crouch",
     "lie_belly",
     "stay",
