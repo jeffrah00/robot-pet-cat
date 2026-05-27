@@ -274,6 +274,7 @@ class PhysicsCat:
         # Settle-step counter for the get_up policy (trained at 8 Hz,
         # settle_steps=25 vs walker decimation=4 at 50 Hz).
         self._get_up_substep_counter: int = 0
+        self._substep_counter: int = 0  # persistent across brain ticks
 
         # ---- v7/FR-Net adapter: foot-geom IDs for predicted_next_contact ---- #
         # When get_up_policy.obs_dim == 46 the policy expects 4 extra contact
@@ -447,7 +448,7 @@ class PhysicsCat:
             # mjlab Go1-Getup trains with decimation=4 (50 Hz), same as walker.
             # settle_steps=25 is the training-time reset-window mask, NOT
             # a decimation. Earlier code queried posture policies at 8 Hz.
-            query = (substep % self.cfg.decimation == 0)
+            query = (self._substep_counter % self.cfg.decimation == 0)
             if query and use_stay:
                 # Held-pose bypass: no policy call, no obs build.
                 for _i in range(12):
@@ -505,6 +506,7 @@ class PhysicsCat:
                 self._get_up_substep_counter += 1
 
             mujoco.mj_step(self.mj_model, mj_data)
+            self._substep_counter += 1
             # Advance phase clock by one physics substep so that between
             # consecutive policy queries (decimation=4 substeps) the phase
             # advances by decimation * physics_dt = 4 * 0.005 = 0.02 s,
