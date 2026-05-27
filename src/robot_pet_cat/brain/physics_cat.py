@@ -505,13 +505,16 @@ class PhysicsCat:
                 self._get_up_substep_counter += 1
 
             mujoco.mj_step(self.mj_model, mj_data)
-
-        # Advance the phase clock by dt (only when moving, like the env).
-        cmd_norm = float(np.linalg.norm(cmd_arr))
-        if cmd_norm >= self.cfg.phase_stand_threshold:
-            self._phase_time = (self._phase_time + dt) % self.cfg.phase_period
-        else:
-            self._phase_time = 0.0
+            # Advance phase clock by one physics substep so that between
+            # consecutive policy queries (decimation=4 substeps) the phase
+            # advances by decimation * physics_dt = 4 * 0.005 = 0.02 s,
+            # matching the training step_dt.  The old code advanced by the
+            # full brain dt (0.05 s) *outside* the loop, running 2.5x too fast.
+            cmd_norm = float(np.linalg.norm(cmd_arr))
+            if cmd_norm >= self.cfg.phase_stand_threshold:
+                self._phase_time = (self._phase_time + self.cfg.physics_dt) % self.cfg.phase_period
+            else:
+                self._phase_time = 0.0
 
         self._refresh_pose_cache(mj_data)
 
