@@ -35,7 +35,6 @@ from .stand import Stand
 from .trot import Trot
 from .turn_in_place import TurnInPlace
 from .walk import Walk
-from .get_up import GetUp
 from .stay import Stay
 
 
@@ -51,8 +50,7 @@ def _build_skills() -> dict[str, Skill]:
     both are manual PD posture skills with no RL training.
     """
     return {
-        "get_up": GetUp(),
-        "walk": Walk(),           # forward velocity ~1.0 m/s
+            "walk": Walk(),           # forward velocity ~1.0 m/s
         "crouch": Crouch(),
         "lie_belly": LieBelly(),   # prone sphinx/loaf pose
         "lie_side": LieSide(),     # side-lying pose (right side down)
@@ -63,7 +61,6 @@ def _build_skills() -> dict[str, Skill]:
 # Stable insertion order — DON'T reorder; brain checkpoints encode integer
 # indices that map back through SKILL_NAMES. New skills append to the end.
 SKILL_NAMES: tuple[str, ...] = (
-    "get_up",
     "walk",
     "crouch",
     "lie_belly",

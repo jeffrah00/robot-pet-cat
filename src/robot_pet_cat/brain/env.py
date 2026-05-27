@@ -136,7 +136,7 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
     xy target or a per-entity goal — None is the right answer for all.
     """
     del scene_state, cat_xy  # unused after pivot
-    if skill_name in ("get_up", "walk", "crouch", "lie_belly", "lie_side", "stay"):
+    if skill_name in ("walk", "crouch", "lie_belly", "lie_side", "stay"):
         return None
     raise KeyError(f"no default goal recipe for skill {skill_name!r}")
 
@@ -465,10 +465,10 @@ class BrainEnv:
                 _pgz = -_xmat[2, 2]  # projected gravity z
                 _upright = _pgz <= -0.5
                 if new_skill_name == "walk" and not _upright:
-                    # Not standing: queue walk, force get_up first
+                    # Not standing: queue walk, force crouch first (crouch recovers from fallen)
                     self._queued_walk_skill = new_skill_name
-                    new_skill_name = "get_up"
-                    info["dispatched"] = "get_up (walk_guard)"
+                    new_skill_name = "crouch"
+                    info["dispatched"] = "crouch (walk_guard)"
                 elif self._queued_walk_skill is not None:
                     if _upright:
                         # Upright now: release queued walk skill
@@ -476,9 +476,9 @@ class BrainEnv:
                         info["dispatched"] = new_skill_name + " (walk_guard_released)"
                         self._queued_walk_skill = None
                     else:
-                        # Still getting up: keep forcing get_up
-                        new_skill_name = "get_up"
-                        info["dispatched"] = "get_up (walk_guard_pending)"
+                        # Still recovering: keep forcing crouch
+                        new_skill_name = "crouch"
+                        info["dispatched"] = "crouch (walk_guard_pending)"
 
         # Skill-commitment gate: a non-HOLD skill, once dispatched, persists
         # for at least cfg.min_skill_duration_s before the policy can switch
