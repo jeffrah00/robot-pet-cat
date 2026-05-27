@@ -1,0 +1,3 @@
+LINES=10
+[render3d] rolling out 600 steps -> renders/all_skills_demo.mp4
+[render3d]  placed cat in fallen state at t=1.00s

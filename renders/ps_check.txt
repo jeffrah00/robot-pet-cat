@@ -1,0 +1,5 @@
+0
+-rw-rw-rw- 1 root root 2.2M May 27 09:09 /workspace/robot-pet-cat/renders/brain3d_v1.mp4
+[render3d] creating renderers: main=960x640, eye=320x320
+[render3d] rolling out 600 steps -> renders/brain3d_v1.mp4
+[Wed May 27 09:09:17 UTC 2026] RENDER2 DONE

@@ -1,0 +1,2 @@
+all_skills: h264, 1280x640, 600f, 20/1fps
+brain3d: h264, 1280x640, 600f, 20/1fps
