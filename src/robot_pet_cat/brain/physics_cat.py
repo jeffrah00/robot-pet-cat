@@ -455,9 +455,6 @@ class PhysicsCat:
                     # All posture policies use the 42/46-dim get_up obs shape.
                     obs = self._build_posture_observation(mj_data, posture_policies[active])
                     action = posture_policies[active](obs[None, :])[0]
-                elif use_slow_walker:
-                    obs = self._build_observation(mj_data, cmd_arr)
-                    action = self.walker_slow_policy(obs[None, :])[0]
                 else:
                     obs = self._build_observation(mj_data, cmd_arr)
                     action = self.policy(obs[None, :])[0]
