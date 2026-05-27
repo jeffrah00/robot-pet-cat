@@ -85,19 +85,12 @@ def _set_fallen_state(mj_model, mj_data, joint_qpos_adrs):
     _mj.mj_forward(mj_model, mj_data)
 
 SCRIPTED_SCHEDULE_S = [
-    # 2026-05-26 post-Go1 pivot + `stay` addition: cycle through the canonical
-    # 7-skill set. Skill name appears in HUD; underlying locomotion uses Go1
-    # mjlab walkers + the 4 mjlab posture policies + the keyframe lie_belly
-    # ramp + the new `stay` freeze.
-    (0.0,  "get_up"),       # lead with get_up; knock-down fires at t=1.0 so
-                            # the policy has something to recover from
-    (1.05, "get_up"),       # explicit re-entry right after knock at t=1.0
-    (4.0,  "stay"),         # freeze the post-recovery pose for ~2s
-    (6.0,  "walk_slow"),    # gentle locomotion
-    (9.0,  "crouch"),       # alert low posture
-    (12.0, "lie_belly"),    # rest on belly
-    (15.0, "lie_side"),     # rest on side
-    (18.0, "walk_normal"),  # back to active
+    # get_up -> walk sequence: robot settles standing, knocked to floor at
+    # t=1.0s via --knock-down, then get_up recovers for ~6s, then walks.
+    (0.0,  "get_up"),       # lead; knock-down fires at t=1.0s
+    (1.05, "get_up"),       # re-entry right after knockdown
+    (7.0,  "walk_slow"),    # gentle locomotion after full recovery
+    (18.0, "walk_normal"),  # ramp up to normal speed
 ]
 
 

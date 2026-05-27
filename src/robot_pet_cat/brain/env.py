@@ -368,6 +368,7 @@ class BrainEnv:
             )
         self.active_skill_name = None
         self.time_in_skill = 0.0
+        self._queued_walk_skill: Optional[str] = None  # walk guard: queued walk skill pending get_up
         self.t_sim = 0.0
         self.episode_step = 0
         self.last_reward_breakdown = {}
@@ -455,6 +456,30 @@ class BrainEnv:
         else:
             new_skill_name = SKILL_NAMES[action - 1]
             info["dispatched"] = new_skill_name
+            # Walk guard (sim + real, uses projected-gravity
+            # z-component from IMU/xmat  works on hardware too):
+            # proj_grav_z  -1.0 when upright, > -0.5 when fallen.
+            if self.cfg.use_physics_cat:
+                _xmat = np.asarray(
+                    self.mj_data.xmat[self.cat._base_body_id]
+                ).reshape(3, 3)
+                _pgz = -_xmat[2, 2]  # projected gravity z
+                _upright = _pgz <= -0.5
+                if new_skill_name in ("walk_slow", "walk_normal") and not _upright:
+                    # Not standing: queue walk, force get_up first
+                    self._queued_walk_skill = new_skill_name
+                    new_skill_name = "get_up"
+                    info["dispatched"] = "get_up (walk_guard)"
+                elif self._queued_walk_skill is not None:
+                    if _upright:
+                        # Upright now: release queued walk skill
+                        new_skill_name = self._queued_walk_skill
+                        info["dispatched"] = new_skill_name + " (walk_guard_released)"
+                        self._queued_walk_skill = None
+                    else:
+                        # Still getting up: keep forcing get_up
+                        new_skill_name = "get_up"
+                        info["dispatched"] = "get_up (walk_guard_pending)"
 
         # Skill-commitment gate: a non-HOLD skill, once dispatched, persists
         # for at least cfg.min_skill_duration_s before the policy can switch
