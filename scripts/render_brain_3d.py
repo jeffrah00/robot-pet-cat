@@ -85,13 +85,15 @@ def _set_fallen_state(mj_model, mj_data, joint_qpos_adrs):
     _mj.mj_forward(mj_model, mj_data)
 
 SCRIPTED_SCHEDULE_S = [
-    # 2026-05-27: canonical 4-skill set (walk, crouch, lie_belly, stay).
-    (0.0,  "walk"),         # start walking
-    (4.0,  "stay"),         # freeze current pose for ~2s
-    (6.0,  "crouch"),       # alert low posture
-    (9.0,  "lie_belly"),    # rest on belly
-    (12.0, "walk"),         # back to active locomotion
-    (15.0, "stay"),         # pause again
+    # 5-skill all_skills_demo with --knock-down:
+    # robot starts upright, walks briefly, knocked down at t=1.0s,
+    # walk guard forces crouch (recovery), releases to walk, then
+    # cycles all remaining skills.
+    (0.0,   "walk"),        # start walking (upright at spawn)
+    (1.05,  "walk"),        # re-assert walk after knock-down; guard forces crouch
+    (11.0,  "crouch"),      # explicit crouch posture after recovery
+    (15.0,  "lie_belly"),   # lie on belly
+    (23.0,  "stay"),        # stay still
 ]
 
 
@@ -222,6 +224,22 @@ def main() -> int:
         help="Disable mode policy entirely.",
     )
     p.add_argument(
+        "--scripted-get-up", action="store_true",
+        help="Replace the trained get_up .pt policy with the keyframe-based "
+        "ScriptedGetUpPolicy (deterministic joint-angle ramp).",
+    )
+    p.add_argument(
+        "--get-up-checkpoint",
+        default="models/mjlab_go1_getup.pt",
+        help="Path to the trained get_up policy. Ignored when "
+        "--scripted-get-up is set.",
+    )
+    p.add_argument(
+        "--walker-slow-checkpoint",
+        default="models/mjlab_go1_walker_slow.pt",
+        help="Slow-walker policy (Mjlab-Velocity-Slow-Unitree-Go1).",
+    )
+    p.add_argument(
         "--crouch-checkpoint",
         default="models/mjlab_go1_crouch.pt",
         help="Mjlab-Crouch-Flat-Unitree-Go1 checkpoint.",
@@ -233,7 +251,8 @@ def main() -> int:
     )
     p.add_argument(
         "--knock-down", action="store_true",
-        help="At sim t=1.0s, place the cat in a fallen state.",
+        help="At sim t=1.0s, apply an angular impulse to roll the cat onto "
+        "its side so the scripted get_up has something to recover from.",
     )
     args = p.parse_args()
 
@@ -284,15 +303,26 @@ def main() -> int:
             init_mode = Attractor.EXPLORING
         mode_policy = ModePolicy(ModePolicyConfig(initial_mode=init_mode))
 
+    # Resolve get_up policy: scripted callable or trained checkpoint.
+    if args.scripted_get_up:
+        from robot_pet_cat.brain.scripted_get_up import ScriptedGetUpPolicy
+        get_up_obj = ScriptedGetUpPolicy()
+        _log("using ScriptedGetUpPolicy (keyframe joint-angle sequence)")
+    else:
+        get_up_obj = Path(args.get_up_checkpoint)
+        _log(f"using trained get_up policy: {get_up_obj}")
+
     cfg = BrainEnvConfig(
         use_physics_cat=True,
         walker_policy_path=Path(args.policy),
         initial_cat_xy=tuple(args.initial_xy),
         max_steps_per_episode=args.steps + 1,
         mode_policy=mode_policy,
-        decision_period_min_steps=40,
-        decision_period_max_steps=120,
+        decision_period_min_steps=1 if args.scripted else 40,
+        decision_period_max_steps=1 if args.scripted else 120,
         hind_sit_policy_path=Path("models/hind_sit_v1.pt"),
+        get_up_policy_path=get_up_obj,
+        walker_slow_policy_path=Path(args.walker_slow_checkpoint),
         crouch_policy_path=Path(args.crouch_checkpoint),
         lie_belly_policy_path=Path(args.lie_belly_checkpoint),
     )
@@ -352,7 +382,10 @@ def main() -> int:
     knock_done = False
     t_loop = time.perf_counter()
     for step in range(args.steps):
-        # Optional knock-down: place the cat in a fallen state at sim t=1.0s.
+        # Optional knock-down: apply an angular impulse near sim t=1.0s so
+        # the scripted get_up has something to recover from. The scripted
+        # action schedule picks up "get_up" at t=2.5s and fires GetUp ->
+        # gait="get_up" -> ScriptedGetUpPolicy in PhysicsCat.
         if args.knock_down and not knock_done and env.t_sim >= 1.0:
             _set_fallen_state(env.mj_model, env.mj_data, env.cat._joint_qpos_adr)
             knock_done = True

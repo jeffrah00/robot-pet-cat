@@ -34,7 +34,6 @@ from .stand import Stand
 from .trot import Trot
 from .turn_in_place import TurnInPlace
 from .walk import Walk
-from .get_up import GetUp
 from .stay import Stay
 
 
@@ -44,14 +43,14 @@ def _build_skills() -> dict[str, Skill]:
     instance shared across decision ticks; the brain is responsible for
     `.reset()` on transitions.
 
-    2026-05-25: project pivoted to Go1 + mjlab_playground recipes.
-    2026-05-27: get_up, walk_slow, lie_side removed. crouch is now
-    the universal recovery skill. walk (Walk class) is the sole
-    locomotion skill. Canonical set is 4 skills.
+    2026-05-25: project pivoted to Go1 + mjlab_playground recipes. The
+    canonical skill set is now exactly six entries. LieBelly and LieSide
+    are distinct classes (different joint targets / ramp curves) even though
+    both are manual PD posture skills with no RL training.
     """
     return {
-        "walk": Walk(),            # forward velocity ~1.0 m/s
-        "crouch": Crouch(),        # low posture + universal recovery
+            "walk": Walk(),           # forward velocity ~1.0 m/s
+        "crouch": Crouch(),
         "lie_belly": LieBelly(),   # prone sphinx/loaf pose
         "stay": Stay(),            # freeze current joint config
     }
@@ -127,4 +126,4 @@ class SkillRegistry:
         return self.get(name).step(obs, goal)
 
     def is_done(self, name: str, obs: dict[str, Any], goal: Any) -> bool:
-        return s
+        return self.get(name).is_done(obs, goal)

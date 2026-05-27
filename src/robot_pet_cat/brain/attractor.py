@@ -64,40 +64,45 @@ class Attractor(str, Enum):
 # `walk_to` and `look_at` appear in many modes because they're general-purpose
 # competence skills, not character-defining.
 #
-# 2026-05-27 revision: skill set reduced to 4 canonical skills:
-#   walk, crouch, lie_belly, stay
-# All other skills (get_up, walk_slow, walk_normal, lie_side) removed.
-# `stay` appears in modes where stillness is iconic (RESTING, OBSERVING,
-# STALKING, GROOMING) and is omitted from motion-dominant modes
-# (PLAYING, EXPLORING).
+# 2026-05-23 revision: per-mode allow-lists redistributed across all 15
+# SKILL_NAMES entries. Three universal skills appear in every mode:
+#   - get_up      : recovery from fall (mode-agnostic, the original gap)
+#   - stand       : default upright posture / transition state
+#   - look_at     : visual attention is always available to a cat
+# All other skills land in the mode(s) where they fit the mode's character.
 # MODE_HARD_BLOCKED (below) still denies locomotion during rest/groom even
 # when soft-pass would let it through.
 MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
-    # 2026-05-27 update: canonical 4-skill set (walk, crouch, lie_belly, stay).
+    # 2026-05-26 update: project pivoted to Go1 + mjlab_playground. The
+    # canonical set is 7 skills now (6 mjlab + manual `stay`). get_up is
+    # universal across modes as the recovery skill; `stay` (freeze current
+    # pose) appears in modes where stillness is iconic (RESTING, OBSERVING,
+    # STALKING, GROOMING) and is omitted from motion-dominant modes
+    # (PLAYING, EXPLORING). See [[project_pivot_to_go1]] for context.
     #
-    # Settled, low energy. Lying poses + low alert.
+    # Settled, low energy. Lying poses + low alert + recovery.
     Attractor.RESTING:   (
-        "lie_belly", "crouch", "stay",
+        "lie_belly", "crouch", "get_up", "stay",
     ),
-    # Alert but not pursuing. Stationary low watch + approach.
+    # Alert but not pursuing. Stationary low watch + slow approach + recovery.
     Attractor.OBSERVING: (
-        "crouch", "walk", "stay",
+        "crouch", "get_up", "stay",
     ),
-    # Pre-pounce, locked on something. Low ready pose + creep.
+    # Pre-pounce, locked on something. Low ready pose + slow creep.
     Attractor.STALKING:  (
-        "crouch", "walk", "stay",
+        "crouch", "get_up", "stay",
     ),
-    # Active engagement with a play target. Brisk locomotion.
+    # Active engagement with a play target. Brisk locomotion + slow stalking.
     Attractor.PLAYING:   (
-        "walk", "crouch",
+        "walk", "get_up",
     ),
     # Static / quiet self-care. Mirrors resting; mood distinguishes.
     Attractor.GROOMING:  (
-        "lie_belly", "crouch", "stay",
+        "lie_belly", "crouch", "get_up", "stay",
     ),
     # Locomotion-dominant, low-engagement wandering.
     Attractor.EXPLORING: (
-        "walk", "crouch",
+        "walk", "get_up",
     ),
 }
 
