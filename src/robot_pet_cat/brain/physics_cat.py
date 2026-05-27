@@ -397,17 +397,14 @@ class PhysicsCat:
         use_posture = (
             cmd.gait in posture_policies and posture_policies[cmd.gait] is not None
         )
-        use_slow_walker = (
-            cmd.gait == "walk_slow" and self.walker_slow_policy is not None
-        )
+    
         use_stay = (cmd.gait == "stay")
         # Back-compat names used downstream.
         use_hind_sit = (cmd.gait == "hind_sit") and (self.hind_sit_policy is not None)
         use_get_up = use_posture  # all posture policies follow the get_up dispatch shape
         if use_posture:
             active = cmd.gait
-        elif use_slow_walker:
-            active = "walker_slow"
+
         elif use_stay:
             active = "stay"
         else:

@@ -86,15 +86,15 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
     ),
     # Alert but not pursuing. Stationary low watch + slow approach + recovery.
     Attractor.OBSERVING: (
-        "crouch", "walk_slow", "get_up", "stay",
+        "crouch", "get_up", "stay",
     ),
     # Pre-pounce, locked on something. Low ready pose + slow creep.
     Attractor.STALKING:  (
-        "crouch", "walk_slow", "get_up", "stay",
+        "crouch", "get_up", "stay",
     ),
     # Active engagement with a play target. Brisk locomotion + slow stalking.
     Attractor.PLAYING:   (
-        "walk_normal", "walk_slow", "get_up",
+        "walk", "get_up",
     ),
     # Static / quiet self-care. Mirrors resting; mood distinguishes.
     Attractor.GROOMING:  (
@@ -102,7 +102,7 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
     ),
     # Locomotion-dominant, low-engagement wandering.
     Attractor.EXPLORING: (
-        "walk_normal", "walk_slow", "get_up",
+        "walk", "get_up",
     ),
 }
 
@@ -111,8 +111,8 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
 # semantic contract of resting/grooming modes too severely to allow even
 # occasionally.
 MODE_HARD_BLOCKED: dict[Attractor, frozenset[str]] = {
-    Attractor.RESTING:  frozenset({"walk_normal", "walk_slow"}),
-    Attractor.GROOMING: frozenset({"walk_normal", "walk_slow"}),
+    Attractor.RESTING:  frozenset({"walk"}),
+    Attractor.GROOMING: frozenset({"walk"}),
 }
 
 

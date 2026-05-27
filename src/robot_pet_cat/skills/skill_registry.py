@@ -52,8 +52,7 @@ def _build_skills() -> dict[str, Skill]:
     """
     return {
         "get_up": GetUp(),
-        "walk_normal": Walk(),     # forward velocity ~1.0 m/s
-        "walk_slow": Prowl(),      # slow forward velocity
+        "walk": Walk(),           # forward velocity ~1.0 m/s
         "crouch": Crouch(),
         "lie_belly": LieBelly(),   # prone sphinx/loaf pose
         "lie_side": LieSide(),     # side-lying pose (right side down)
@@ -65,8 +64,7 @@ def _build_skills() -> dict[str, Skill]:
 # indices that map back through SKILL_NAMES. New skills append to the end.
 SKILL_NAMES: tuple[str, ...] = (
     "get_up",
-    "walk_normal",
-    "walk_slow",
+    "walk",
     "crouch",
     "lie_belly",
     "lie_side",

@@ -89,8 +89,7 @@ SCRIPTED_SCHEDULE_S = [
     # t=1.0s via --knock-down, then get_up recovers for ~6s, then walks.
     (0.0,  "get_up"),       # lead; knock-down fires at t=1.0s
     (1.05, "get_up"),       # re-entry right after knockdown
-    (7.0,  "walk_slow"),    # gentle locomotion after full recovery
-    (18.0, "walk_normal"),  # ramp up to normal speed
+    (7.0,  "walk"),         # locomotion after full recovery
 ]
 
 

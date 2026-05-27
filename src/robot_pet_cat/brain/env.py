@@ -136,8 +136,7 @@ def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarr
     xy target or a per-entity goal — None is the right answer for all.
     """
     del scene_state, cat_xy  # unused after pivot
-    if skill_name in ("get_up", "walk_normal", "walk_slow",
-                       "crouch", "lie_belly", "lie_side", "stay"):
+    if skill_name in ("get_up", "walk", "crouch", "lie_belly", "lie_side", "stay"):
         return None
     raise KeyError(f"no default goal recipe for skill {skill_name!r}")
 
@@ -179,7 +178,7 @@ class BrainEnvConfig:
     decision_period_max_steps: int = 1
     # Deprecated: enforcement-style skill commitment. Kept for
     # backwards compat; prefer the decision_period_* knobs. 0 = off.
-    min_skill_duration_s: float = 0.0
+    min_skill_duration_s: float = 1.0
     # ICM curiosity wiring. Off by default -- when enabled, the env owns a
     # CuriosityReward, projects obs->feature each step, feeds intrinsic
     # reward to the composer, and emits Transitions in info for a trainer
@@ -465,7 +464,7 @@ class BrainEnv:
                 ).reshape(3, 3)
                 _pgz = -_xmat[2, 2]  # projected gravity z
                 _upright = _pgz <= -0.5
-                if new_skill_name in ("walk_slow", "walk_normal") and not _upright:
+                if new_skill_name == "walk" and not _upright:
                     # Not standing: queue walk, force get_up first
                     self._queued_walk_skill = new_skill_name
                     new_skill_name = "get_up"
