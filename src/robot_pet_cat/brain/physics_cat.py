@@ -657,29 +657,47 @@ class PhysicsCat:
     def _build_observation(self, mj_data, cmd_arr: np.ndarray) -> np.ndarray:
         """Build 48-dim obs for Go1 flat velocity walker.
 
-        Layout: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)
-                +joint_pos(12)+joint_vel(12)+action(12) = 48
+        Layout: base_ang_vel(3)+proj_grav(3)+cmd(3)+phase(2)
+                +joint_pos(12)+joint_vel(12)+action(12)+body_height_cmd(1) = 48
+
+        Matches the velocity_mob *actor* obs used during training.
+        base_lin_vel is critic-only and must NOT appear here.
+        phase is a 2-dim sin/cos clock zeroed when the command norm is
+        below phase_stand_threshold (matches training env behaviour).
+        body_height_cmd is unused in robot-pet-cat so it is held at 0.
 
         Joint dims (joint_pos, joint_vel, last_action) are emitted in Go1
-        MJCF order (FR,FL,RR,RL) — what mjlab iterated when training the
+        MJCF order (FR,FL,RR,RL) -- what mjlab iterated when training the
         walker. PhysicsCat looks up indices in GO2_JOINT_NAMES order
         (FL,FR,RL,RR), so _GO1_TO_PHYS_PERM is applied at read time. The
         action-application path is the inverse permutation; see the
         walker branch of step().
         """
-        # 1. base_lin_vel (3) -- root translational velocity in body frame.
-        # qvel[0:3] is world-frame linear velocity of the free joint.
+        # rotation matrix for proj_grav and (unused here) lin_vel
         xmat = np.asarray(mj_data.xmat[self._base_body_id]).reshape(3, 3)
-        base_lin_vel = (xmat.T @ mj_data.qvel[:3]).astype(np.float32)
 
-        # 2. base_ang_vel (3) -- gyro reading.
+        # 1. base_ang_vel (3) -- gyro reading.
         base_ang_vel = mj_data.sensordata[self._gyro_adr : self._gyro_adr + 3]
 
-        # 3. projected_gravity (3): -R[2,:] (third ROW of xmat)
+        # 2. projected_gravity (3): -R[2,:] (third ROW of xmat)
         projected_gravity = -xmat[2, :]
 
-        # 4. command (3): the velocity twist [vx, vy, yaw_rate].
+        # 3. command (3): the velocity twist [vx, vy, yaw_rate].
         command = cmd_arr
+
+        # 4. phase (2): sin/cos clock, zeroed when standing (matches training).
+        cmd_norm = float(np.linalg.norm(cmd_arr))
+        if cmd_norm < self.cfg.phase_stand_threshold:
+            phase = np.zeros(2, dtype=np.float32)
+        else:
+            phase_frac = self._phase_time / self.cfg.phase_period
+            phase = np.array(
+                [
+                    np.sin(2.0 * np.pi * phase_frac),
+                    np.cos(2.0 * np.pi * phase_frac),
+                ],
+                dtype=np.float32,
+            )
 
         # 5. joint_pos (12): q - q_default, in Go1 MJCF order.
         p = self._GO1_TO_PHYS_PERM
@@ -700,23 +718,23 @@ class PhysicsCat:
         # 7. last_action (12), already in Go1 MJCF order (raw policy output).
         last_action = self._last_action
 
-        # 48-dim: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)+joint_pos(12)+joint_vel(12)+action(12)
+        # 8. body_height_cmd (1): height offset command -- not used, hold at 0.
+        body_height_cmd = np.zeros(1, dtype=np.float32)
+
+        # 48-dim: base_ang_vel(3)+proj_grav(3)+cmd(3)+phase(2)+joint_pos(12)+joint_vel(12)+action(12)+body_height_cmd(1)
         obs = np.concatenate(
             [
-                base_lin_vel,
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
                 command,
+                phase,
                 joint_pos,
                 joint_vel,
                 last_action,
+                body_height_cmd,
             ]
         ).astype(np.float32)
         return obs
-
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
 
     def _command_to_twist(self, cmd: LocomotionCommand) -> np.ndarray:
         """Convert a LocomotionCommand into the walker's 3-d twist channel.

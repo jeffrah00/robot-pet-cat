@@ -338,7 +338,7 @@ GO1_DEFAULT_SPAWN_Z: float = 0.278
 
 
 def load_go1_walker_policy(policy_path, device: str = "cpu") -> WalkerPolicy:
-    """Load the Go1 velocity walker (48-dim obs: base_lin_vel replaces phase clock).
+    """Load the Go1 velocity walker (48-dim obs: ang_vel+proj_grav+cmd+phase+jpos+jvel+action+height_cmd).
 
     Layout: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)
             +joint_pos(12)+joint_vel(12)+action(12) = 48
