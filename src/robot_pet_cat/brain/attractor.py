@@ -74,35 +74,36 @@ class Attractor(str, Enum):
 # when soft-pass would let it through.
 MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
     # 2026-05-26 update: project pivoted to Go1 + mjlab_playground. The
-    # canonical set is 7 skills now (6 mjlab + manual `stay`). get_up is
+    # canonical set is 6 skills now (5 mjlab + manual `stay`). get_up is
     # universal across modes as the recovery skill; `stay` (freeze current
     # pose) appears in modes where stillness is iconic (RESTING, OBSERVING,
     # STALKING, GROOMING) and is omitted from motion-dominant modes
     # (PLAYING, EXPLORING). See [[project_pivot_to_go1]] for context.
+    # 2026-05-27: lie_side removed from skill set.
     #
     # Settled, low energy. Lying poses + low alert + recovery.
     Attractor.RESTING:   (
-        "lie_belly", "lie_side", "crouch", "get_up", "stay",
+        "lie_belly", "crouch", "get_up", "stay",
     ),
     # Alert but not pursuing. Stationary low watch + slow approach + recovery.
     Attractor.OBSERVING: (
-        "crouch", "get_up", "stay",
+        "crouch", "walk_slow", "get_up", "stay",
     ),
     # Pre-pounce, locked on something. Low ready pose + slow creep.
     Attractor.STALKING:  (
-        "crouch", "get_up", "stay",
+        "crouch", "walk_slow", "get_up", "stay",
     ),
     # Active engagement with a play target. Brisk locomotion + slow stalking.
     Attractor.PLAYING:   (
-        "walk", "get_up",
+        "walk_normal", "walk_slow", "get_up",
     ),
     # Static / quiet self-care. Mirrors resting; mood distinguishes.
     Attractor.GROOMING:  (
-        "lie_belly", "lie_side", "crouch", "get_up", "stay",
+        "lie_belly", "crouch", "get_up", "stay",
     ),
     # Locomotion-dominant, low-engagement wandering.
     Attractor.EXPLORING: (
-        "walk", "get_up",
+        "walk_normal", "walk_slow", "get_up",
     ),
 }
 
@@ -111,8 +112,8 @@ MODE_SKILLS: dict[Attractor, tuple[str, ...]] = {
 # semantic contract of resting/grooming modes too severely to allow even
 # occasionally.
 MODE_HARD_BLOCKED: dict[Attractor, frozenset[str]] = {
-    Attractor.RESTING:  frozenset({"walk"}),
-    Attractor.GROOMING: frozenset({"walk"}),
+    Attractor.RESTING:  frozenset({"walk_normal", "walk_slow"}),
+    Attractor.GROOMING: frozenset({"walk_normal", "walk_slow"}),
 }
 
 

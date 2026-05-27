@@ -5,13 +5,13 @@ env:
   episode_length_s: 120
   decision_period_s: 2.0       # brain queried every 2 seconds of sim time
   skills:                      # registry of mid-level skills available
-    # 2026-05-25 post-Go1 pivot: canonical 6-skill set.
+    # 2026-05-27: canonical 6-skill set (lie_side removed).
     - get_up
     - walk_normal
     - walk_slow
     - crouch
     - lie_belly
-    - lie_side
+    - stay
 
 mood:
   dim: 6
@@ -52,3 +52,6 @@ logging:
 
 output:
   hf_repo: ${HF_USERNAME}/go2-cat-brain
+  push_to_hub: true
+
+seed: 0

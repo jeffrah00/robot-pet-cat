@@ -22,7 +22,6 @@ from typing import Any
 from .crouch import Crouch
 from .hind_sit import HindSit
 from .lie_belly import LieBelly
-from .lie_side import LieSide
 from .look_at import LookAt
 from .sit import Sit
 from .skill_policy import Skill
@@ -45,17 +44,15 @@ def _build_skills() -> dict[str, Skill]:
     instance shared across decision ticks; the brain is responsible for
     `.reset()` on transitions.
 
-    2026-05-25: project pivoted to Go1 + mjlab_playground recipes. The
-    canonical skill set is now exactly six entries. LieBelly and LieSide
-    are distinct classes (different joint targets / ramp curves) even though
-    both are manual PD posture skills with no RL training.
+    2026-05-25: project pivoted to Go1 + mjlab_playground recipes.
+    2026-05-27: lie_side removed; canonical set is now 6 skills.
     """
     return {
         "get_up": GetUp(),
-        "walk": Walk(),           # forward velocity ~1.0 m/s
+        "walk_normal": Walk(),     # forward velocity ~1.0 m/s
+        "walk_slow": Prowl(),      # slow forward velocity
         "crouch": Crouch(),
         "lie_belly": LieBelly(),   # prone sphinx/loaf pose
-        "lie_side": LieSide(),     # side-lying pose (right side down)
         "stay": Stay(),            # freeze current joint config
     }
 
@@ -64,10 +61,10 @@ def _build_skills() -> dict[str, Skill]:
 # indices that map back through SKILL_NAMES. New skills append to the end.
 SKILL_NAMES: tuple[str, ...] = (
     "get_up",
-    "walk",
+    "walk_normal",
+    "walk_slow",
     "crouch",
     "lie_belly",
-    "lie_side",
     "stay",
 )
 

@@ -130,13 +130,15 @@ def _nearest_entity(scene_state: SceneState, cat_xy, **flag_filter):
 def pick_default_goal(skill_name: str, scene_state: SceneState, cat_xy: np.ndarray):
     """Choose a sensible goal for a skill from scene + cat position.
 
-    2026-05-25: post-Go1 pivot, every skill in the canonical 6-skill set is
-    either a static posture (crouch, lie_belly, lie_side, get_up) or pure
+    2026-05-25: post-Go1 pivot, every skill in the canonical set is
+    either a static posture (crouch, lie_belly, get_up) or pure
     velocity locomotion (walk_normal, walk_slow). None of them need an
     xy target or a per-entity goal — None is the right answer for all.
+    2026-05-27: lie_side removed.
     """
     del scene_state, cat_xy  # unused after pivot
-    if skill_name in ("get_up", "walk", "crouch", "lie_belly", "lie_side", "stay"):
+    if skill_name in ("get_up", "walk_normal", "walk_slow",
+                       "crouch", "lie_belly", "stay"):
         return None
     raise KeyError(f"no default goal recipe for skill {skill_name!r}")
 
@@ -178,7 +180,7 @@ class BrainEnvConfig:
     decision_period_max_steps: int = 1
     # Deprecated: enforcement-style skill commitment. Kept for
     # backwards compat; prefer the decision_period_* knobs. 0 = off.
-    min_skill_duration_s: float = 1.0
+    min_skill_duration_s: float = 0.0
     # ICM curiosity wiring. Off by default -- when enabled, the env owns a
     # CuriosityReward, projects obs->feature each step, feeds intrinsic
     # reward to the composer, and emits Transitions in info for a trainer
@@ -214,7 +216,6 @@ class BrainEnvConfig:
     walker_slow_policy_path: Optional[Path] = None
     crouch_policy_path: Optional[Path] = None
     lie_belly_policy_path: Optional[Path] = None
-    lie_side_policy_path: Optional[Path] = None
     # Spawn height for the Go2 base body at reset. 0.32 matches the
     # init_state z in unitree_rl_mjlab's training config.
     physics_spawn_z: float = 0.32
@@ -269,7 +270,6 @@ class BrainEnv:
                 walker_slow_policy=self.cfg.walker_slow_policy_path,
                 crouch_policy=self.cfg.crouch_policy_path,
                 lie_belly_policy=self.cfg.lie_belly_policy_path,
-                lie_side_policy=self.cfg.lie_side_policy_path,
             )
         else:
             self.mj_model = mujoco.MjModel.from_xml_path(str(self.cfg.scene_xml))
@@ -367,7 +367,6 @@ class BrainEnv:
             )
         self.active_skill_name = None
         self.time_in_skill = 0.0
-        self._queued_walk_skill: Optional[str] = None  # walk guard: queued walk skill pending get_up
         self.t_sim = 0.0
         self.episode_step = 0
         self.last_reward_breakdown = {}
@@ -455,30 +454,6 @@ class BrainEnv:
         else:
             new_skill_name = SKILL_NAMES[action - 1]
             info["dispatched"] = new_skill_name
-            # Walk guard (sim + real, uses projected-gravity
-            # z-component from IMU/xmat  works on hardware too):
-            # proj_grav_z  -1.0 when upright, > -0.5 when fallen.
-            if self.cfg.use_physics_cat:
-                _xmat = np.asarray(
-                    self.mj_data.xmat[self.cat._base_body_id]
-                ).reshape(3, 3)
-                _pgz = -_xmat[2, 2]  # projected gravity z
-                _upright = _pgz <= -0.5
-                if new_skill_name == "walk" and not _upright:
-                    # Not standing: queue walk, force get_up first
-                    self._queued_walk_skill = new_skill_name
-                    new_skill_name = "get_up"
-                    info["dispatched"] = "get_up (walk_guard)"
-                elif self._queued_walk_skill is not None:
-                    if _upright:
-                        # Upright now: release queued walk skill
-                        new_skill_name = self._queued_walk_skill
-                        info["dispatched"] = new_skill_name + " (walk_guard_released)"
-                        self._queued_walk_skill = None
-                    else:
-                        # Still getting up: keep forcing get_up
-                        new_skill_name = "get_up"
-                        info["dispatched"] = "get_up (walk_guard_pending)"
 
         # Skill-commitment gate: a non-HOLD skill, once dispatched, persists
         # for at least cfg.min_skill_duration_s before the policy can switch

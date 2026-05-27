@@ -142,7 +142,6 @@ class PhysicsCat:
         walker_slow_policy: "WalkerPolicy | str | Path | None" = None,
         crouch_policy: "WalkerPolicy | str | Path | None" = None,
         lie_belly_policy: "WalkerPolicy | str | Path | None" = None,
-        lie_side_policy: "WalkerPolicy | str | Path | None" = None,
     ) -> None:
         import mujoco
 
@@ -196,7 +195,6 @@ class PhysicsCat:
             return load_get_up_policy(p)
         self.crouch_policy = _maybe_load_posture(crouch_policy)
         self.lie_belly_policy = _maybe_load_posture(lie_belly_policy)
-        self.lie_side_policy = _maybe_load_posture(lie_side_policy)
         # ---- Index lookups against the compiled MuJoCo model ----------- #
         # Base body and its free-joint qpos/qvel offsets.
         base_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, GO1_BASE_BODY)
@@ -274,7 +272,6 @@ class PhysicsCat:
         # Settle-step counter for the get_up policy (trained at 8 Hz,
         # settle_steps=25 vs walker decimation=4 at 50 Hz).
         self._get_up_substep_counter: int = 0
-        self._substep_counter: int = 0  # persistent across brain ticks
 
         # ---- v7/FR-Net adapter: foot-geom IDs for predicted_next_contact ---- #
         # When get_up_policy.obs_dim == 46 the policy expects 4 extra contact
@@ -384,27 +381,29 @@ class PhysicsCat:
         mujoco = self._mujoco
 
         # Determine which policy is active this tick. Posture policies
-        # (get_up/crouch/lie_belly/lie_side/hind_sit) are 42-dim and share
-        # the get_up dispatch path (8Hz settle, scale=0.6, perm to phys order).
+        # (get_up/crouch/lie_belly/hind_sit) are 42-dim and share the
+        # get_up dispatch path (8Hz settle, scale=0.6, perm to phys order).
         # Walker policies (normal + slow) are 48-dim, decimation=4 (50Hz).
         posture_policies = {
             "hind_sit": self.hind_sit_policy,
             "get_up": self.get_up_policy,
             "crouch": self.crouch_policy,
             "lie_belly": self.lie_belly_policy,
-            "lie_side": self.lie_side_policy,
         }
         use_posture = (
             cmd.gait in posture_policies and posture_policies[cmd.gait] is not None
         )
-    
+        use_slow_walker = (
+            cmd.gait == "walk_slow" and self.walker_slow_policy is not None
+        )
         use_stay = (cmd.gait == "stay")
         # Back-compat names used downstream.
         use_hind_sit = (cmd.gait == "hind_sit") and (self.hind_sit_policy is not None)
         use_get_up = use_posture  # all posture policies follow the get_up dispatch shape
         if use_posture:
             active = cmd.gait
-
+        elif use_slow_walker:
+            active = "walker_slow"
         elif use_stay:
             active = "stay"
         else:
@@ -445,7 +444,7 @@ class PhysicsCat:
             # mjlab Go1-Getup trains with decimation=4 (50 Hz), same as walker.
             # settle_steps=25 is the training-time reset-window mask, NOT
             # a decimation. Earlier code queried posture policies at 8 Hz.
-            query = (self._substep_counter % self.cfg.decimation == 0)
+            query = (substep % self.cfg.decimation == 0)
             if query and use_stay:
                 # Held-pose bypass: no policy call, no obs build.
                 for _i in range(12):
@@ -455,6 +454,9 @@ class PhysicsCat:
                     # All posture policies use the 42/46-dim get_up obs shape.
                     obs = self._build_posture_observation(mj_data, posture_policies[active])
                     action = posture_policies[active](obs[None, :])[0]
+                elif use_slow_walker:
+                    obs = self._build_observation(mj_data, cmd_arr)
+                    action = self.walker_slow_policy(obs[None, :])[0]
                 else:
                     obs = self._build_observation(mj_data, cmd_arr)
                     action = self.policy(obs[None, :])[0]
@@ -463,7 +465,7 @@ class PhysicsCat:
                 if cmd.joint_targets is not None:
                     targets = np.asarray(cmd.joint_targets, dtype=np.float32)
                 elif use_posture:
-                    # mjlab posture policies (get_up + crouch/lie_belly/lie_side)
+                    # mjlab posture policies (get_up + crouch/lie_belly)
                     # use SettleRelativeJointPositionAction:
                     #   target = current_pos + raw_action * 0.6 - encoder_bias
                     # encoder_bias=0 at deployment. Earlier code wrote
@@ -500,17 +502,13 @@ class PhysicsCat:
                 self._get_up_substep_counter += 1
 
             mujoco.mj_step(self.mj_model, mj_data)
-            self._substep_counter += 1
-            # Advance phase clock by one physics substep so that between
-            # consecutive policy queries (decimation=4 substeps) the phase
-            # advances by decimation * physics_dt = 4 * 0.005 = 0.02 s,
-            # matching the training step_dt.  The old code advanced by the
-            # full brain dt (0.05 s) *outside* the loop, running 2.5x too fast.
-            cmd_norm = float(np.linalg.norm(cmd_arr))
-            if cmd_norm >= self.cfg.phase_stand_threshold:
-                self._phase_time = (self._phase_time + self.cfg.physics_dt) % self.cfg.phase_period
-            else:
-                self._phase_time = 0.0
+
+        # Advance the phase clock by dt (only when moving, like the env).
+        cmd_norm = float(np.linalg.norm(cmd_arr))
+        if cmd_norm >= self.cfg.phase_stand_threshold:
+            self._phase_time = (self._phase_time + dt) % self.cfg.phase_period
+        else:
+            self._phase_time = 0.0
 
         self._refresh_pose_cache(mj_data)
 
@@ -542,9 +540,9 @@ class PhysicsCat:
         return out
 
     def _build_posture_observation(self, mj_data, policy) -> np.ndarray:
-        """Posture obs sized to the target policy's obs_dim. All 5 posture
-        heads (get_up, crouch, lie_belly, lie_side, hind_sit) were trained
-        on the same 42-dim Go1 MJCF-order shape; v7+ get_up adds a 4-dim
+        """Posture obs sized to the target policy's obs_dim. All posture
+        heads (get_up, crouch, lie_belly, hind_sit) were trained on the
+        same 42-dim Go1 MJCF-order shape; v7+ get_up adds a 4-dim
         FR-Net predicted_next_contact tail to make 46."""
         base = self._build_go1_getup_observation(mj_data)
         target_dim = getattr(policy, "obs_dim", 42)
@@ -656,35 +654,31 @@ class PhysicsCat:
     def _build_observation(self, mj_data, cmd_arr: np.ndarray) -> np.ndarray:
         """Build 48-dim obs for Go1 flat velocity walker.
 
-        Layout: base_ang_vel(3)+proj_grav(3)+cmd(3)+phase(2)
-                +joint_pos(12)+joint_vel(12)+action(12)+body_height_cmd(1) = 48
-
-        Matches the velocity_mob *actor* obs used during training.
-        base_lin_vel is critic-only and must NOT appear here.
-        phase is a 2-dim sin/cos clock zeroed when the command norm is
-        below phase_stand_threshold (matches training env behaviour).
-        body_height_cmd is unused in robot-pet-cat so it is held at 0.
+        Layout: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)
+                +joint_pos(12)+joint_vel(12)+action(12) = 48
 
         Joint dims (joint_pos, joint_vel, last_action) are emitted in Go1
-        MJCF order (FR,FL,RR,RL) -- what mjlab iterated when training the
+        MJCF order (FR,FL,RR,RL) — what mjlab iterated when training the
         walker. PhysicsCat looks up indices in GO2_JOINT_NAMES order
         (FL,FR,RL,RR), so _GO1_TO_PHYS_PERM is applied at read time. The
         action-application path is the inverse permutation; see the
         walker branch of step().
         """
-        # rotation matrix for proj_grav and (unused here) lin_vel
+        # 1. base_lin_vel (3) -- root translational velocity in body frame.
+        # qvel[0:3] is world-frame linear velocity of the free joint.
         xmat = np.asarray(mj_data.xmat[self._base_body_id]).reshape(3, 3)
+        base_lin_vel = (xmat.T @ mj_data.qvel[:3]).astype(np.float32)
 
-        # 1. base_ang_vel (3) -- gyro reading.
+        # 2. base_ang_vel (3) -- gyro reading.
         base_ang_vel = mj_data.sensordata[self._gyro_adr : self._gyro_adr + 3]
 
-        # 2. projected_gravity (3): -R[2,:] (third ROW of xmat)
+        # 3. projected_gravity (3): -R[2,:] (third ROW of xmat)
         projected_gravity = -xmat[2, :]
 
-        # 3. command (3): the velocity twist [vx, vy, yaw_rate].
+        # 4. command (3): the velocity twist [vx, vy, yaw_rate].
         command = cmd_arr
 
-        # 4. joint_pos (12): q - q_default, in Go1 MJCF order.
+        # 5. joint_pos (12): q - q_default, in Go1 MJCF order.
         p = self._GO1_TO_PHYS_PERM
         qpos = mj_data.qpos
         joint_pos = np.array(
@@ -693,33 +687,33 @@ class PhysicsCat:
             dtype=np.float32,
         )
 
-        # 5. joint_vel (12), in Go1 MJCF order.
+        # 6. joint_vel (12), in Go1 MJCF order.
         qvel = mj_data.qvel
         joint_vel = np.array(
             [qvel[self._joint_qvel_adr[p[i]]] for i in range(12)],
             dtype=np.float32,
         )
 
-        # 6. last_action (12), already in Go1 MJCF order (raw policy output).
+        # 7. last_action (12), already in Go1 MJCF order (raw policy output).
         last_action = self._last_action
 
-        # 7. local_linvel (3): body-frame linear velocity (velocimeter).
-        local_linvel = mj_data.sensordata[self._linvel_adr : self._linvel_adr + 3]
-
-        # 48-dim: local_linvel(3)+gyro(3)+proj_grav(3)+joint_pos(12)+joint_vel(12)+last_act(12)+cmd(3)
-        # Matches joystick.py _get_obs actor state layout used during training.
+        # 48-dim: base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)+joint_pos(12)+joint_vel(12)+action(12)
         obs = np.concatenate(
             [
-                np.asarray(local_linvel, dtype=np.float32),
+                base_lin_vel,
                 np.asarray(base_ang_vel, dtype=np.float32),
                 np.asarray(projected_gravity, dtype=np.float32),
+                command,
                 joint_pos,
                 joint_vel,
                 last_action,
-                command,
             ]
         ).astype(np.float32)
         return obs
+
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
 
     def _command_to_twist(self, cmd: LocomotionCommand) -> np.ndarray:
         """Convert a LocomotionCommand into the walker's 3-d twist channel.

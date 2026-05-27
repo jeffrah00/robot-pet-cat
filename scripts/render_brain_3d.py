@@ -85,11 +85,18 @@ def _set_fallen_state(mj_model, mj_data, joint_qpos_adrs):
     _mj.mj_forward(mj_model, mj_data)
 
 SCRIPTED_SCHEDULE_S = [
-    # get_up -> walk sequence: robot settles standing, knocked to floor at
-    # t=1.0s via --knock-down, then get_up recovers for ~6s, then walks.
-    (0.0,  "get_up"),       # lead; knock-down fires at t=1.0s
-    (1.05, "get_up"),       # re-entry right after knockdown
-    (7.0,  "walk"),         # locomotion after full recovery
+    # 2026-05-27 post-Go1 pivot: cycle through the canonical 6-skill set.
+    # Skill name appears in HUD; underlying locomotion uses Go1 mjlab
+    # walkers + the 3 mjlab posture policies + the keyframe lie_belly
+    # ramp + the new `stay` freeze. lie_side removed.
+    (0.0,  "get_up"),       # lead with get_up; knock-down fires at t=1.0 so
+                            # the policy has something to recover from
+    (1.05, "get_up"),       # explicit re-entry right after knock at t=1.0
+    (4.0,  "stay"),         # freeze the post-recovery pose for ~2s
+    (6.0,  "walk_slow"),    # gentle locomotion
+    (9.0,  "crouch"),       # alert low posture
+    (12.0, "lie_belly"),    # rest on belly
+    (15.0, "walk_normal"),  # back to active
 ]
 
 
@@ -246,11 +253,6 @@ def main() -> int:
         help="Mjlab-LieBelly-Flat-Unitree-Go1 checkpoint.",
     )
     p.add_argument(
-        "--lie-side-checkpoint",
-        default="models/mjlab_go1_lie_side.pt",
-        help="Mjlab-LieSide-Flat-Unitree-Go1 checkpoint.",
-    )
-    p.add_argument(
         "--knock-down", action="store_true",
         help="At sim t=1.0s, apply an angular impulse to roll the cat onto "
         "its side so the scripted get_up has something to recover from.",
@@ -319,14 +321,13 @@ def main() -> int:
         initial_cat_xy=tuple(args.initial_xy),
         max_steps_per_episode=args.steps + 1,
         mode_policy=mode_policy,
-        decision_period_min_steps=1 if args.scripted else 40,
-        decision_period_max_steps=1 if args.scripted else 120,
+        decision_period_min_steps=40,
+        decision_period_max_steps=120,
         hind_sit_policy_path=Path("models/hind_sit_v1.pt"),
         get_up_policy_path=get_up_obj,
         walker_slow_policy_path=Path(args.walker_slow_checkpoint),
         crouch_policy_path=Path(args.crouch_checkpoint),
         lie_belly_policy_path=Path(args.lie_belly_checkpoint),
-        lie_side_policy_path=Path(args.lie_side_checkpoint),
     )
     _log("building BrainEnv with PhysicsCat (this loads the walker)...")
     t0 = time.perf_counter()
