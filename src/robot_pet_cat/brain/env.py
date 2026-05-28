@@ -221,7 +221,7 @@ class BrainEnvConfig:
     # renders a tiny cat_eye frame each step and adds "cat_eye_img" (H x W float32
     # [0,1] grayscale) to the obs dict. This is the raw pixel signal that feeds
     # the v1 curiosity feature vector and the visual obs space.
-    use_cat_eye_obs: bool = True
+    use_cat_eye_obs: bool = False
     cat_eye_render_width: int = 16
     cat_eye_render_height: int = 16
 
