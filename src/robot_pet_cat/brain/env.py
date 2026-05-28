@@ -512,6 +512,7 @@ class BrainEnv:
                 # Still moving: keep in stay
                 new_skill_name = "stay"
                 info["dispatched"] = "stay (crouch_guard_pending)"
+        _upright = True  # step-level default; overridden inside use_physics_cat
         # lie_belly guard: always route through crouch before lie_belly
         if new_skill_name == "lie_belly" and self.active_skill_name != "crouch" and self._queued_walk_skill is None:
             # Substitute crouch, queue lie_belly to fire once stable
