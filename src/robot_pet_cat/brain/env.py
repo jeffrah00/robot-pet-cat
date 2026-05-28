@@ -473,6 +473,7 @@ class BrainEnv:
             # Walk guard (sim + real, uses projected-gravity
             # z-component from IMU/xmat  works on hardware too):
             # proj_grav_z  -1.0 when upright, > -0.5 when fallen.
+            _upright = True  # default: stable; overridden below when use_physics_cat
             if self.cfg.use_physics_cat:
                 _xmat = np.asarray(
                     self.mj_data.xmat[self.cat._base_body_id]
