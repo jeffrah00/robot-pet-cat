@@ -355,22 +355,26 @@ The full rollout is at
 
 \begin{table}[h]
   \centering\small
-  \caption{10-minute autonomous rollout. Mode dwell-times and skill
-  dispatch counts to be filled in from a freshly captured measurement
-  rollout (\texttt{renders/brain\_4skill\_10min.mp4}) prior to camera-ready
-  submission. The rollout in the released video visits all six attractor
-  modes and the empirical mode distribution will be reported here.}
+  \caption{10-minute autonomous rollout from
+  \texttt{brain\_4skill\_v1.zip}. All six attractor modes are visited; total
+  mode time sums to 600\,s. Mean dwell-times cluster just above
+  $\tau_{\min} = 8.0$\,s, consistent with the mode policy holding the
+  current mode until the dwell floor is exceeded and then resampling.
+  ``Skill dispatches'' lists the top skill counts within each mode (a
+  \emph{dispatch} is a transition from one active skill to another).
+  Reproduce with
+  \texttt{python scripts/measure\_rollout.py --duration 600}.}
   \label{tab:rollout}
-  \begin{tabular}{lcc}
+  \begin{tabular}{lrccl}
     \toprule
-    Mode        & Mean dwell (s) & Skill dispatches \\
+    Mode        & $n$ & Mean (s) & Std (s) & Top skill dispatches \\
     \midrule
-    \textsc{resting}   & TBD & TBD \\
-    \textsc{observing} & TBD & TBD \\
-    \textsc{stalking}  & TBD & TBD \\
-    \textsc{playing}   & TBD & TBD \\
-    \textsc{grooming}  & TBD & TBD \\
-    \textsc{exploring} & TBD & TBD \\
+    \textsc{resting}   & 13 & 9.3 & 1.9 & \texttt{crouch}:16, \texttt{lie\_belly}:10, \texttt{stay}:5 \\
+    \textsc{observing} &  8 & 8.1 & 0.0 & \texttt{stay}:15, \texttt{crouch}:11, \texttt{walk}:9 \\
+    \textsc{stalking}  & 14 & 8.1 & 2.5 & \texttt{stay}:38, \texttt{crouch}:19, \texttt{walk}:16 \\
+    \textsc{playing}   & 14 & 9.8 & 3.3 & \texttt{stay}:28, \texttt{crouch}:20, \texttt{walk}:11 \\
+    \textsc{grooming}  &  6 & 8.8 & 1.5 & \texttt{crouch}:11, \texttt{lie\_belly}:7, \texttt{stay}:3 \\
+    \textsc{exploring} & 12 & 9.1 & 1.8 & \texttt{stay}:24, \texttt{crouch}:24, \texttt{lie\_belly}:12 \\
     \bottomrule
   \end{tabular}
 \end{table}
