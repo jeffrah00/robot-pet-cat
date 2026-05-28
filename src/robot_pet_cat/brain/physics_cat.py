@@ -266,9 +266,6 @@ class PhysicsCat:
         # switching between walker and hind_sit (the two policies have
         # different action distributions; a stale last_action is OOD).
         self._last_active_policy = "walker"
-        # Held joint targets for gait="stay" -- snapshotted on
-        # activation, written every tick thereafter.
-        self._stay_targets = np.zeros(12, dtype=np.float32)
         # Settle-step counter for the get_up policy (trained at 8 Hz,
         # settle_steps=25 vs walker decimation=4 at 50 Hz).
         self._get_up_substep_counter: int = 0
@@ -395,15 +392,12 @@ class PhysicsCat:
             cmd.gait in posture_policies and posture_policies[cmd.gait] is not None
         )
     
-        use_stay = (cmd.gait == "stay")
         # Back-compat names used downstream.
         use_hind_sit = (cmd.gait == "hind_sit") and (self.hind_sit_policy is not None)
         use_get_up = use_posture  # all posture policies follow the get_up dispatch shape
         if use_posture:
             active = cmd.gait
 
-        elif use_stay:
-            active = "stay"
         else:
             active = "walker"
 
@@ -422,15 +416,12 @@ class PhysicsCat:
                 _newp = posture_policies[active]
                 if _newp is not None and hasattr(_newp, "reset"):
                     _newp.reset()
-            elif active == "stay":
-                # Snapshot current joint configuration; held forever after.
-                self._stay_targets = np.array(
-                    [mj_data.qpos[self._joint_qpos_adr[i]] for i in range(12)],
-                    dtype=np.float32,
-                )
 
-        # Map LocomotionCommand -> 3-dim twist (only used by walker path).
-        cmd_arr = self._command_to_twist(cmd)
+        # Map LocomotionCommand -> 3-dim twist (walker path; stay uses zeros).
+        if cmd.gait == "stay":
+            cmd_arr = np.zeros(3, dtype=np.float32)
+        else:
+            cmd_arr = self._command_to_twist(cmd)
         self._last_cmd_arr = cmd_arr
 
         # go1_getup was trained with settle_steps=25 (8 Hz policy rate).
@@ -443,11 +434,7 @@ class PhysicsCat:
             # settle_steps=25 is the training-time reset-window mask, NOT
             # a decimation. Earlier code queried posture policies at 8 Hz.
             query = (self._substep_counter % self.cfg.decimation == 0)
-            if query and use_stay:
-                # Held-pose bypass: no policy call, no obs build.
-                for _i in range(12):
-                    mj_data.ctrl[self._actuator_ids[_i]] = float(self._stay_targets[_i])
-            elif query:
+            if query:
                 if use_posture:
                     # All posture policies use the 42/46-dim get_up obs shape.
                     obs = self._build_posture_observation(mj_data, posture_policies[active])
