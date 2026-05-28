@@ -85,15 +85,11 @@ def _set_fallen_state(mj_model, mj_data, joint_qpos_adrs):
     _mj.mj_forward(mj_model, mj_data)
 
 SCRIPTED_SCHEDULE_S = [
-    # 5-skill all_skills_demo with --knock-down:
-    # robot starts upright, walks briefly, knocked down at t=1.0s,
-    # walk guard forces crouch (recovery), releases to walk, then
-    # cycles all remaining skills.
-    (0.0,   "walk"),        # start walking (upright at spawn)
-    (1.05,  "walk"),        # re-assert walk after knock-down; guard forces crouch
-    (11.0,  "crouch"),      # explicit crouch posture after recovery
-    (15.0,  "lie_belly"),   # lie on belly
-    (23.0,  "stay"),        # stay still
+    (0.0,  "walk"),
+    (4.0,  "lie_belly"),   # should trigger: walk->crouch->lie_belly
+    (12.0, "walk"),
+    (16.0, "lie_belly"),   # second test
+    (24.0, "stay"),
 ]
 
 
