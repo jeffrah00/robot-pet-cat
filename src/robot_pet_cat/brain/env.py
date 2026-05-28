@@ -185,7 +185,7 @@ class BrainEnvConfig:
     # to batch into .update(). curiosity_w stays controlled via
     # CompositeRewardConfig.curiosity_w (so wiring vs. signal weight are
     # separate knobs).
-    curiosity_enabled: bool = False
+    curiosity_enabled: bool = True
     curiosity_seed: Optional[int] = None
     curiosity_lr: float = 1.0e-3
     curiosity_feature_dim: int = 64

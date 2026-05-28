@@ -483,9 +483,9 @@ class CompositeRewardConfig:
       targets don't trigger saliency (memory: brain-v0-baseline-findings).
     """
 
-    curiosity_w: float = 0.05
-    comfort_w: float = 1.0
-    play_w: float = 0.3
+    curiosity_w: float = 0.2
+    comfort_w: float = 0.4
+    play_w: float = 0.4
     hold_w: float = 1.0
 
 
