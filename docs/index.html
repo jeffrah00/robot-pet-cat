@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to Make a Robot Pet Cat - Part 1: Brain</title>
+<meta name="description" content="A three-tier learning stack that turns a simulated Unitree Go1 into something that acts like a cat. Code, weights, paper, and rollouts.">
+<meta property="og:title" content="How to Make a Robot Pet Cat - Part 1: Brain">
+<meta property="og:description" content="A three-tier learning stack that turns a simulated Unitree Go1 into something that acts like a cat.">
+<meta property="og:type" content="article">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%90%88%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #fafaf9;
+    --fg: #1a1a1a;
+    --muted: #6b6b6b;
+    --border: #e5e5e5;
+    --accent: #1f6feb;
+    --accent-soft: #eef4ff;
+    --code-bg: #f4f4f2;
+    --max-w: 920px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14151a;
+      --fg: #e7e7e7;
+      --muted: #9a9a9a;
+      --border: #2a2c33;
+      --accent: #6aa3ff;
+      --accent-soft: #1c2434;
+      --code-bg: #1c1d22;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .container { max-width: var(--max-w); margin: 0 auto; padding: 0 24px; }
+  header.title {
+    padding: 64px 24px 28px;
+    text-align: center;
+  }
+  header.title h1 {
+    font-size: 56px;
+    line-height: 1.1;
+    margin: 0 0 10px;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+  }
+  header.title .part {
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: .02em;
+    margin: 0 0 18px;
+  }
+  header.title h2.subtitle {
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0 0 22px;
+  }
+  @media (max-width: 600px) {
+    header.title h1 { font-size: 38px; }
+  }
+  .authors { color: var(--muted); margin-bottom: 6px; font-size: 16px; }
+  .affil { color: var(--muted); font-size: 14px; }
+  .links {
+    margin: 24px 0 0;
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;
+  }
+  .links a {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: 999px;
+    padding: 8px 18px;
+    color: var(--fg);
+    font-size: 14px;
+    display: inline-flex; align-items: center; gap: 8px;
+    transition: background .15s, border-color .15s;
+  }
+  .links a:hover { background: var(--accent-soft); border-color: var(--accent); text-decoration: none; }
+  .hero {
+    margin: 36px 0 16px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    background: #000;
+  }
+  .hero video, .hero img {
+    width: 100%; display: block;
+  }
+  .caption {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 10px 16px 6px;
+  }
+  section { padding: 40px 0; border-top: 1px solid var(--border); }
+  section:first-of-type { border-top: none; }
+  section h2 {
+    font-size: 24px;
+    margin: 0 0 16px;
+    letter-spacing: -0.01em;
+  }
+  section h3 {
+    font-size: 17px;
+    margin: 26px 0 10px;
+  }
+  p { margin: 0 0 14px; }
+  code, pre {
+    font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    border-radius: 6px;
+  }
+  code { padding: 1px 6px; font-size: 13.5px; }
+  pre { padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.55; }
+  pre code { background: transparent; padding: 0; }
+  .stack {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13.5px;
+    line-height: 1.7;
+    margin: 14px 0 22px;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .video-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin: 18px 0 0;
+  }
+  .video-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .video-card video { width: 100%; display: block; background: #000; }
+  .video-card .label {
+    padding: 10px 14px;
+    font-size: 14px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+  }
+  .video-card .label strong { color: var(--fg); display: block; margin-bottom: 2px; }
+  table.weights {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 4px;
+    font-size: 14px;
+  }
+  table.weights th, table.weights td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.weights th { color: var(--muted); font-weight: 500; }
+  table.weights td code { font-size: 12.5px; }
+  .pill {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 2px 9px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  .negative {
+    background: var(--code-bg);
+    border-left: 3px solid #d65a5a;
+    padding: 12px 16px;
+    border-radius: 0 8px 8px 0;
+    margin: 10px 0;
+    font-size: 14px;
+  }
+  .negative b { color: #d65a5a; }
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    padding: 36px 24px 60px;
+    border-top: 1px solid var(--border);
+  }
+  details summary { cursor: pointer; color: var(--muted); }
+  .bib { font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<header class="title">
+  <div class="container">
+    <h1>How to Make a Robot Pet Cat</h1>
+    <div class="part">Part 1 - Brain</div>
+    <h2 class="subtitle">A three-tier learning stack that turns a Unitree Go1 into something that acts like a cat.</h2>
+    <div class="authors">Jeffrey Rah</div>
+    <div class="affil">Independent · <a href="mailto:jeffrah89@gmail.com">jeffrah89@gmail.com</a></div>
+    <div class="links">
+      <a href="paper/paper.pdf">📄 Paper (PDF)</a>
+      <a href="https://arxiv.org/abs/TBD">📚 arXiv</a>
+      <a href="https://github.com/jeffrah00/robot-pet-cat">💻 Code</a>
+      <a href="https://huggingface.co/jeffrah00/robot-pet-cat">🤗 Weights</a>
+      <a href="#video">▶ 10-min rollout</a>
+      <a href="#bibtex">⚓ BibTeX</a>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="hero" id="video">
+    <video controls preload="metadata" poster="">
+      <source src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain_4skill_10min.mp4" type="video/mp4">
+      Your browser does not support the video tag.
+    </video>
+  </div>
+  <div class="caption">
+    10-minute autonomous rollout. No external command input — the brain
+    decides what to do moment by moment. <code>brain_4skill_v1.zip</code> +
+    the four learned skills.
+  </div>
+
+  <section>
+    <h2>TL;DR</h2>
+    <p>
+      The cat-feel does not live in the locomotion layer and it does not
+      live in the skill library. It lives in a small thing on top: a
+      <strong>behavioral-mode attractor</strong> with a
+      <strong>6-dimensional mood latent</strong> and a
+      <strong>stochastic decision period</strong>. Add those three to a
+      vanilla PPO categorical head and a generic walker, and the rollout
+      starts to look like a cat.
+    </p>
+    <p>
+      This page summarizes Part 1 — Brain. It also describes the substrate
+      the brain runs on (Tier 1 walker, Tier 2 skills) and documents the
+      paradigms we tried and threw away.
+    </p>
+  </section>
+
+  <section>
+    <h2>The stack</h2>
+    <div class="stack">brain    (Tier 3) — PPO + 6-D mood + 6-mode attractor, ~0.5 Hz
+   ↓ skill ID
+skills   (Tier 2) — { walk, crouch, lie_belly, stay } + scripted get_up
+   ↓ velocity / joint targets
+motion   (Tier 1) — Go1 velocity-tracking walker (mjlab PPO), 50 Hz
+   ↓ joint torques
+MuJoCo + Unitree Go1</div>
+    <p>
+      Each tier is independently trainable. The contribution of Part 1 is
+      the brain layer plus the empirical observation that the skill set
+      should be small — four learned skills is enough, more skills do not
+      help.
+    </p>
+
+    <h3>Why three pieces, specifically</h3>
+    <p>
+      <span class="pill">attractors</span> A low-frequency mode-transition
+      policy picks one of six behavioral modes (<em>resting</em>,
+      <em>observing</em>, <em>stalking</em>, <em>playing</em>,
+      <em>grooming</em>, <em>exploring</em>). Each mode exposes a coherent
+      subset of skills via an action mask. Without this, the brain
+      thrashes between skills every tick.
+    </p>
+    <p>
+      <span class="pill">mood</span> A 6-vector Ornstein–Uhlenbeck latent.
+      Three of its dimensions, passed through a sigmoid, are the weights
+      on the curiosity / comfort / play reward streams. Behavior shifts
+      gradually rather than discretely — a sleepy cat takes minutes to
+      become a playful one.
+    </p>
+    <p>
+      <span class="pill">stochastic decision period</span> The brain is
+      consulted every <code>T ~ U(1.5, 4.0) s</code>, not on a fixed
+      clock. This single change eliminates the metronomic 2 Hz switching
+      pattern that a fixed-tick categorical head produces, without any
+      retraining.
+    </p>
+  </section>
+
+  <section>
+    <h2>Skill library</h2>
+    <p>
+      Four learned skills, one scripted recovery. Earlier versions of the
+      system carried fifteen named skills; we converged here after the
+      <em>faking-is-enough</em> principle: scripted PD for postures, RL
+      only where RL is necessary.
+    </p>
+    <div class="video-grid">
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain_walker_perm_fix_v1.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>walk</strong>Go1 mjlab velocity-tracking walker.</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/crouch_v8_render.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>crouch</strong>Stable crouch posture, 489-step episode.</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/lie_belly_go1_v3.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>lie_belly</strong>Belly-down loaf pose.</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain_scripted_stay_first_v1.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>stay</strong>Freeze current joint config.</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain_getup_fixed_v3_real_policy.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>get_up</strong>Scripted PD keyframe sequence (not RL).</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain_4skill_10min.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>brain (composed)</strong>10-min autonomous rollout.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What we tried and removed</h2>
+    <p>
+      A paper that only reports the final design overstates how obvious
+      that design was. These paradigms were tried, integrated, and
+      removed:
+    </p>
+    <div class="negative">
+      <b>AMP imitation track.</b> Trained PPO + a style discriminator over
+      ~20 retargeted cat motion clips. Under velocity commands, the
+      resulting policy moved zero meters in five seconds. We moved
+      cat-feel up to Tier 3.
+    </div>
+    <div class="negative">
+      <b>walk-these-ways as a unified skill space.</b> Forked the mjlab
+      Go2-Flat task into a MoB variant with body-height, gait-frequency,
+      and stance commands. Two consecutive runs failed to actually expose
+      the new commands to the policy. We use separate skill checkpoints.
+    </div>
+    <div class="negative">
+      <b>Single-policy RL get-up.</b> Eleven variants (v1–v10 plus FR-Net
+      auxiliary head). Eight converged to <em>sphynx</em> or
+      <em>belly-flat</em> reward-hacks. One looked successful but only
+      because of a curriculum-at-deployment bug. The final
+      <code>get_up</code> is a 400-tick scripted PD keyframe and works on
+      the first try.
+    </div>
+  </section>
+
+  <section>
+    <h2>Released weights</h2>
+    <table class="weights">
+      <thead>
+        <tr><th>File</th><th>Size</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>walker/go1_walker_v0.pt</code></td><td>~1.5 MB</td><td>Tier 1 velocity-tracking walker</td></tr>
+        <tr><td><code>skills/walk_v1.pt</code></td><td>~160 KB</td><td>forward walking gait</td></tr>
+        <tr><td><code>skills/crouch_v1.pt</code></td><td>~160 KB</td><td>stable crouch posture</td></tr>
+        <tr><td><code>skills/lie_belly_v1.pt</code></td><td>~160 KB</td><td>belly-down loaf pose</td></tr>
+        <tr><td><code>skills/stay_v1.pt</code></td><td>~160 KB</td><td>freeze current joint config</td></tr>
+        <tr><td><code>brain/brain_4skill_v1.zip</code></td><td>160 KB</td><td>Tier 3 PPO brain, Discrete(5)</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:14px;">
+      All weights are MIT-licensed and mirrored to
+      <a href="https://huggingface.co/jeffrah00/robot-pet-cat">huggingface.co/jeffrah00/robot-pet-cat</a>.
+    </p>
+  </section>
+
+  <section>
+    <h2>Quickstart</h2>
+    <pre><code>git clone https://github.com/jeffrah00/robot-pet-cat.git
+cd robot-pet-cat
+python3.11 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -e ".[dev]"
+
+# Download released weights (~5 MB total)
+python scripts/download_weights.py
+
+# Run a 30-second autonomous rollout
+python scripts/render_brain_3d.py \
+    --checkpoint checkpoints/brain/brain_4skill_v1.zip \
+    --duration 30 --output renders/demo.mp4</code></pre>
+  </section>
+
+  <section id="bibtex">
+    <h2>BibTeX</h2>
+    <pre class="bib"><code>@article{rah2026brain,
+  title   = {How to Make a Robot Pet Cat: Part 1 --- Brain},
+  author  = {Rah, Jeffrey},
+  journal = {arXiv preprint},
+  year    = {2026}
+}</code></pre>
+  </section>
+
+  <section>
+    <h2>What's next</h2>
+    <p>
+      Part 1 is the brain on top of a sim-only substrate. Future parts:
+    </p>
+    <ul>
+      <li><strong>Part 2 — Eyes.</strong> Replace the play-target features with a small visual encoder over a head-mounted egocentric camera.</li>
+      <li><strong>Part 3 — Body.</strong> Sim-to-real on a Go1 (or, eventually, a cat-shaped chassis).</li>
+      <li><strong>Part 4 — Self.</strong> Long-horizon memory, place recognition, and routines that emerge over hours rather than seconds.</li>
+    </ul>
+  </section>
+
+</div>
+
+<footer>
+  <div>Built with MuJoCo + mjlab + Stable-Baselines3 · <a href="https://github.com/jeffrah00/robot-pet-cat">source</a></div>
+  <div style="margin-top:6px;">© 2026 Jeffrey Ra

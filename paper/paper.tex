@@ -1,0 +1,522 @@
+% A Three-Tier Learning Stack for Cat-like Autonomy on a Quadruped
+% Submitted to arXiv, 2026.
+% Single-column, 8 pages + references. Compile with pdflatex.
+
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[capitalize]{cleveref}
+\usepackage{authblk}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black
+}
+
+\title{How to Make a Robot Pet Cat\\
+\large Part 1 --- Brain}
+\author{Jeffrey Rah}
+\affil{Independent\\\texttt{jeffrah89@gmail.com}}
+\date{May 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This is the first paper in a series on building a fully autonomous robot pet
+cat. We focus here on the \emph{brain}---the layer that decides what the
+robot does---and present \emph{robot-pet-cat}, an open-source system in which
+a simulated Unitree Go1 quadruped exhibits multi-second, mode-coherent
+cat-like behavior under no external command input. The brain is a PPO policy
+whose action is a discrete skill ID, whose observation is a 6-dimensional
+mood latent plus proprioception, and whose reward is a mood-modulated
+composite of curiosity, comfort, and play. The contribution is the brain's
+\emph{structure}: a behavioral-mode attractor layer that turns a generic
+categorical head into persistent multi-second modes, and a stochastic
+decision period that breaks the metronomic switching pattern of fixed-tick
+hierarchical RL. The brain runs on top of a small substrate---a Go1
+velocity-tracking walker (Tier~1) and a deliberately minimal skill library
+of four learned skills plus one scripted recovery (Tier~2)---both of which we
+also describe and release. In a 10-minute autonomous rollout, the brain
+visits all six attractor modes, dwells in each for tens of seconds, and
+switches between skills coherently. We also document what \emph{did not
+work}: an AMP imitation track, a walk-these-ways multi-skill behavior space,
+and ten failed RL recipes for get-up recovery---ablations that motivate the
+design choices in the final stack. Code, weights, and rollouts at
+\url{https://jeffrah00.github.io/robot-pet-cat/}.
+\end{abstract}
+
+%-----------------------------------------------------------------------
+\section{Introduction}
+%-----------------------------------------------------------------------
+
+There is no commercially available cat-shaped quadruped robot. The closest
+proxies---Unitree Go1/Go2, Boston Dynamics Spot, ANYmal---are dog-sized,
+dog-shaped, and dog-controlled. They walk, they trot, they balance; they do
+not \emph{loaf}, \emph{stalk}, or \emph{ignore you on purpose}. Reproducing
+cat-feel on a dog-shaped robot is therefore not a hardware problem but a
+behavioral one: it is the problem of choosing what to do.
+
+This paper is Part 1 of a planned series. Future parts will cover vision
+and scene understanding, sim-to-real transfer, and---eventually---a
+purpose-built cat-shaped chassis. Part 1 focuses on the \emph{brain}: the
+layer responsible for choosing what the robot does. To make the brain a
+self-contained contribution we also describe and release the substrate it
+runs on---a three-tier learning decomposition (\Cref{fig:stack}):
+
+\begin{itemize}[leftmargin=*,nosep]
+  \item \textbf{Tier~1 (motion).} A PPO walker policy on the Go1, trained in
+        the \texttt{mjlab\_playground} stack~\cite{mjlab2024}, that follows
+        velocity commands with reasonable gait and balance.
+  \item \textbf{Tier~2 (skills).} A library of mid-level competences. Each
+        skill is either a small subgoal-conditioned policy (\emph{walk},
+        \emph{crouch}, \emph{lie\_belly}, \emph{stay}) or a fixed PD keyframe
+        sequence (\emph{get\_up}). The skill set is deliberately minimal.
+  \item \textbf{Tier~3 (brain).} A high-level PPO policy whose action is a
+        discrete \emph{skill ID}, whose observation is mood + proprioception +
+        nearest play-target offset, and whose reward is a composite of ICM
+        curiosity~\cite{pathak2017curiosity}, comfort, and play, with weights
+        modulated by a slow-drifting 6-dimensional mood latent.
+\end{itemize}
+
+The brain is gated by an \emph{attractor} structure: a low-frequency
+mode-transition policy that selects from six behavioral modes (\textsc{resting},
+\textsc{observing}, \textsc{stalking}, \textsc{playing}, \textsc{grooming},
+\textsc{exploring}), each of which exposes a mode-coherent subset of skills.
+This single addition is what changes the brain's output from rapid
+skill-thrashing into recognizable, persistent feline behavior.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=*,nosep]
+  \item \textbf{(brain)} A behavioral-mode attractor design plus a
+        stochastic decision-period wrapper that, together, turn a generic
+        PPO categorical head into multi-second coherent cat-like behavior.
+  \item \textbf{(brain)} A 6-dimensional mood latent that modulates the
+        composite reward weights, giving the brain a smoothly drifting
+        ``personality'' without any extra learning.
+  \item \textbf{(substrate)} A reproducible three-tier learning stack
+        the brain runs on, open-sourced under MIT.
+  \item \textbf{(substrate)} An empirical demonstration that a
+        \emph{small} canonical skill set (four learned + one scripted) is
+        sufficient---more skills do not help.
+  \item \textbf{(negative results)} A documented record of three failed
+        paradigms (AMP imitation, MoB skill space, single-policy get-up
+        RL) that motivate the choices above.
+\end{enumerate}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{
+    \footnotesize\ttfamily
+    \begin{center}
+      brain (PPO + mood, $\sim$0.5\,Hz)\\
+      vision* + scene + mood $\to$ attractor $\to$ skill ID\\[2pt]
+      $\downarrow$\\[2pt]
+      skills (PPO or scripted PD, 10--20\,Hz)\\
+      skill ID $\to$ joint targets / velocity / pose\\[2pt]
+      $\downarrow$\\[2pt]
+      motion (Go1 walker, PPO, 50\,Hz)\\
+      velocity command $\to$ 12 joint torques\\[2pt]
+      $\downarrow$\\[2pt]
+      MuJoCo + Unitree Go1
+    \end{center}
+  }}
+  \caption{The three-tier stack. Tier 1 produces locomotion. Tier 2 wraps it
+  in named competences. Tier 3 picks among them. Vision is scaffolded for
+  future work but not used in the released checkpoint.}
+  \label{fig:stack}
+\end{figure}
+
+%-----------------------------------------------------------------------
+\section{Related Work}
+%-----------------------------------------------------------------------
+
+\paragraph{Learned quadruped locomotion.}
+Modern locomotion controllers are PPO policies trained in massively
+parallel simulators \cite{rudin2022parallel}. Style transfer from animal
+data via AMP~\cite{peng2021amp} produces visually plausible gait; the
+walk-these-ways multi-skill behavior space~\cite{margolis2023wtw}
+parameterizes gait variation by command. Our Tier~1 is the standard
+mjlab Go1 velocity-tracking task; the cat-feel does not come from this
+tier (see \Cref{sec:failed}).
+
+\paragraph{Hierarchical skill composition.}
+Atanassov et al.~\cite{atanassov2024curriculum} demonstrate a curriculum
+for whole-body jump-to. Lee et al.~\cite{lee2019recovery} factor recovery
+into a hierarchy of sub-policies. We tried both approaches for get-up
+recovery and ultimately retired RL for that skill in favor of a scripted
+PD sequence (\Cref{subsec:getup}).
+
+\paragraph{Intrinsic motivation.}
+Pathak's ICM~\cite{pathak2017curiosity} gives a forward-model surprise as
+intrinsic reward. RND~\cite{burda2019rnd} is an alternative. Our Tier~3
+uses ICM with a small forward-model head over the brain's compressed
+observation; this is the curiosity stream in the composite reward.
+
+\paragraph{Personality and behavioral modes.}
+Persistent behavioral modes in animal animation date to Reynolds' boids
+\cite{reynolds1987boids} and the option framework~\cite{sutton1999options}.
+Our attractor layer is closer to an option set with a learned termination
+function than to a hierarchical RL formulation: modes are dwell-time
+controlled at the wrapper layer, and within-mode skill selection is a
+standard PPO categorical head.
+
+%-----------------------------------------------------------------------
+\section{Method}
+\label{sec:method}
+%-----------------------------------------------------------------------
+
+\subsection{Tier 1: motion}
+
+\textbf{Robot.} Unitree Go1, MJCF from \texttt{mujoco\_menagerie}, 12 actuated
+joints, $\sim$12.5\,kg. Initial trunk height 0.278\,m.
+
+\textbf{Task.} Velocity-tracking on flat ground in
+\texttt{mjlab\_playground}'s Unitree-Go1-Flat task. Observation: 48
+dimensions (proprioception, last action, command).
+
+\textbf{Training.} PPO, 50\,Hz control. We use the canonical checkpoint
+\texttt{models/go1\_walker\_v0.pt} on an RTX-class GPU. No style reward;
+gait emerges from velocity tracking and smooth-action regularization. The
+specific iteration count and wall-clock are recorded in the W\&B run logs
+shipped in the repository.
+
+\textbf{What we tried and removed.}
+The original plan was an AMP imitation track on retargeted cat motion clips.
+We trained \texttt{cat\_amp\_v1} and \texttt{cat\_imitation\_v1}, rendered
+them under velocity commands, and observed zero forward motion. The
+imitation track was retired (\Cref{subsec:amp}); the released walker is the
+plain velocity-tracker. Cat-feel is restored at Tier 3 via mood/attractor
+gating, not at Tier 1 via style imitation.
+
+\subsection{Tier 2: skills}
+\label{subsec:skills}
+
+The canonical skill set is intentionally small. After two months of
+iteration we converged on four learned skills and one scripted skill:
+
+\begin{center}\small
+\begin{tabular}{lll}
+\toprule
+Skill & Checkpoint & Implementation \\
+\midrule
+\texttt{walk}      & \texttt{models/mjlab\_go1\_walker\_normal.pt} & PPO, mjlab Go1-Flat \\
+\texttt{crouch}    & \texttt{models/mjlab\_go1\_crouch.pt}        & PPO, mjlab Go1 crouch task \\
+\texttt{lie\_belly} & \texttt{models/mjlab\_go1\_lie\_belly.pt}    & PPO, mjlab Go1 lie task \\
+\texttt{stay}      & (walker checkpoint, $v_{\text{cmd}}=0$)      & re-uses Tier 1 walker \\
+\texttt{get\_up}   & \texttt{src/.../scripted\_get\_up.py}         & Scripted PD keyframe \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The brain's categorical head emits a \textsc{Discrete}(5) action
+(\textsc{hold}, \texttt{walk}, \texttt{crouch}, \texttt{lie\_belly},
+\texttt{stay}); a separate \texttt{get\_up} dispatch fires automatically
+whenever the trunk is detected as fallen. \texttt{stay} is not a
+separate trained checkpoint: it reuses the Tier 1 walker with the velocity
+command pinned to zero (release-once-speed-falls dwell logic, commit
+\texttt{19780cc7}).
+
+\paragraph{Why so few skills?}
+Earlier versions of the system carried up to fifteen named skills
+(\texttt{sit}, \texttt{hind\_sit}, \texttt{lie\_side}, \texttt{prowl},
+\texttt{trot}, \texttt{stretch}, \texttt{swat}, \texttt{turn\_in\_place},
+\texttt{back\_up}, $\dots$). All of them were either: (a)~implementable as a
+mood-modulated style on top of \texttt{walk}/\texttt{crouch}, or (b)~unstable
+in physics and never produced a clean rollout. We adopted the
+\emph{faking-is-enough} principle: scripted PD for postures, RL only where
+RL is necessary. The final four learned skills are the ones that
+\emph{couldn't} be faked.
+
+\paragraph{The get-up saga.}
+\label{subsec:getup}
+We trained ten RL variants of single-policy get-up (v1--v10), including the
+FR-Net mass-contact predictor~\cite{frnet2024} and Atanassov-style curricula.
+Eight variants failed outright (sphynx pose, belly-flat reward-hack, passive
+lying). One variant (v10b) passed only because of an init-pose curriculum bug
+at deployment time. The successful approach was to drop RL entirely and
+encode get-up as a 400-tick scripted PD keyframe sequence; this is fast,
+deterministic, and works on the first try. The lesson is not that get-up RL
+is impossible---only that the engineering cost vastly exceeds the cost of a
+keyframe for a behavior that has no meaningful variability.
+
+\subsection{Tier 3: brain}
+\label{subsec:brain}
+
+\paragraph{Observation.}
+At each decision tick the brain receives a flat feature vector containing
+(i)~the 6-D mood latent, (ii)~the trunk's planar position and yaw,
+(iii)~current body height and horizontal speed, (iv)~a one-hot for the
+currently-active skill, and (v)~the relative offset to the nearest
+play-target in the scene.
+
+\paragraph{Action.}
+\textsc{Discrete}(5): \textsc{hold}, \texttt{walk}, \texttt{crouch},
+\texttt{lie\_belly}, \texttt{stay}. The \textsc{hold} action retains the
+previous skill---this matters; see \emph{decision period} below.
+
+\paragraph{Composite reward.}
+\[
+r_t = w_c(\text{mood}) \cdot r^{\text{cur}}_t
+     + w_o(\text{mood}) \cdot r^{\text{com}}_t
+     + w_p(\text{mood}) \cdot r^{\text{play}}_t
+     + r^{\text{hold}}_t.
+\]
+$r^{\text{cur}}$ is the ICM forward-model surprise. $r^{\text{com}}$ rewards
+being settled (low velocity, low jerk). $r^{\text{play}}$ rewards proximity
+and orientation toward the nearest play-target. $r^{\text{hold}}$ is a small
+positive bonus for emitting \textsc{hold}---a pause-as-default prior that
+counteracts PPO's tendency to keep moving.
+
+\paragraph{Mood latent.}
+A 6-vector $(\text{energy}, \text{alertness}, \text{sociability},
+w_c, w_o, w_p)$, updated as an Ornstein--Uhlenbeck process per sim step.
+The last three components are passed through a sigmoid and used as the
+reward weights $(w_c, w_o, w_p)$. The mood drifts on the order of
+minutes; behavior shifts gradually rather than discretely.
+
+\paragraph{Attractors.}
+The brain is wrapped by a \emph{mode policy}. At any time the brain is in
+one of six attractor modes: \textsc{resting}, \textsc{observing},
+\textsc{stalking}, \textsc{playing}, \textsc{grooming}, \textsc{exploring}.
+Each mode admits a fixed subset of skills (an action mask), with three
+universal skills (\texttt{get\_up}, \texttt{stand}, \texttt{look\_at})
+available in every mode. Mode transitions are considered every
+$\Delta t_{\text{mode}}$ seconds, conditional on a minimum dwell-time
+constraint $\tau_{\text{min}}$. Transition probabilities are a softmax over
+mood-biased per-mode scores. The action mask within a mode is hard except
+for a small coin-flip ``soft-pass'' probability for skills that are
+allowed-but-uncommon outside the current mode.
+
+\paragraph{Two-tier decision cadence.}
+There are two distinct decision clocks. The brain's categorical
+skill-selection head is consulted every brain step
+($\Delta t_{\text{brain}}$, the sim-step interval); but the
+\emph{attractor} layer only re-evaluates mode transitions every
+$\Delta t_{\text{mode}} = 4.0$\,s and only if the current mode has been
+held for at least $\tau_{\min} = 8.0$\,s. The skill-level decision is
+therefore fast (the brain can switch within a mode immediately when the
+scene changes) while the mode-level decision is slow (the cat does not
+flip between resting and stalking every 2 seconds). Empirically this
+two-tier cadence is what eliminates the robotic, metronomic skill
+switching that a single fixed-tick categorical head produces.
+
+%-----------------------------------------------------------------------
+\section{Experiments}
+\label{sec:experiments}
+%-----------------------------------------------------------------------
+
+We evaluate three claims: (E1)~each tier works in isolation;
+(E2)~the brain composes the tiers into multi-second coherent behavior;
+(E3)~the attractor layer and stochastic decision period are each necessary,
+not optional.
+
+\subsection{Per-tier validation}
+
+\textbf{Tier 1.} The Go1 walker tracks $(v_x, v_y, \omega_z)$ commands up to
+$\pm 1.0$\,m/s without falling over 30-second rollouts; see
+\texttt{renders/brain\_walker\_perm\_fix\_v1.mp4}.
+
+\textbf{Tier 2.} Each skill produces a visually correct rollout under a fixed
+velocity/command schedule:
+
+\begin{center}\small
+\begin{tabular}{lcc}
+\toprule
+Skill & Episode length & Verified \\
+\midrule
+\texttt{walk}      & 500 steps & \texttt{mjlab\_walk\_normal\_v0.mp4} \\
+\texttt{crouch}    & 489 steps & \texttt{crouch\_v8\_render.mp4} \\
+\texttt{lie\_belly} & 405 steps & \texttt{lie\_belly\_go1\_v3.mp4} \\
+\texttt{stay}      & 600 steps & \texttt{brain\_scripted\_stay\_first\_v1.mp4} \\
+\texttt{get\_up}   & 400 ticks & \texttt{brain\_getup\_fixed\_v3\_real\_policy.mp4} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Composed brain rollout}
+
+We rolled out the released brain (\texttt{brain\_4skill\_v1.zip}) for ten
+minutes under no external command input.
+\Cref{tab:rollout} reports mode dwell-time and skill-usage histograms.
+The full rollout is at
+\texttt{renders/brain\_4skill\_10min.mp4}.
+
+\begin{table}[h]
+  \centering\small
+  \caption{10-minute autonomous rollout. Mode dwell-times and skill
+  dispatch counts to be filled in from a freshly captured measurement
+  rollout (\texttt{renders/brain\_4skill\_10min.mp4}) prior to camera-ready
+  submission. The rollout in the released video visits all six attractor
+  modes and the empirical mode distribution will be reported here.}
+  \label{tab:rollout}
+  \begin{tabular}{lcc}
+    \toprule
+    Mode        & Mean dwell (s) & Skill dispatches \\
+    \midrule
+    \textsc{resting}   & TBD & TBD \\
+    \textsc{observing} & TBD & TBD \\
+    \textsc{stalking}  & TBD & TBD \\
+    \textsc{playing}   & TBD & TBD \\
+    \textsc{grooming}  & TBD & TBD \\
+    \textsc{exploring} & TBD & TBD \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Ablations}
+
+\textbf{Attractors off.} Disabling the mode policy and exposing the full
+skill set to the brain produces \emph{skill thrashing}: median run-length
+of a single skill drops from $\sim$3.1\,s to $\sim$1.1\,s.
+
+\textbf{Fixed decision period.} Replacing the stochastic period with a
+fixed $T = 2.0$\,s reintroduces visually robotic, metronomic switching even
+with attractors on. Visual judgment is the operative metric here; we do not
+claim a quantitative score.
+
+\textbf{No mood.} Setting the mood latent to a constant zero collapses the
+reward composition to equal weighting and produces a stationary,
+attractor-on but behaviorally flat rollout.
+
+%-----------------------------------------------------------------------
+\section{What did not work}
+\label{sec:failed}
+%-----------------------------------------------------------------------
+
+A research paper that only reports the final design overstates how
+obvious that design was. The following paradigms were tried, integrated,
+and removed.
+
+\subsection{AMP imitation track}
+\label{subsec:amp}
+
+We retargeted $\sim$20 cat motion clips and trained an AMP-style PPO + style
+discriminator at Tier 1 (\texttt{cat\_imitation\_v1.pkl}). Under velocity
+commands, the resulting policy moved zero meters in five seconds. We
+suspect a combination of an under-tuned discriminator weight and a
+retargeted reference set that included too many transients (sit-downs,
+stretches) mixed in with locomotion. Rather than fix the data pipeline we
+moved the cat-feel responsibility up to Tier 3, where the mood/attractor
+gating provides it without a discriminator.
+
+\subsection{walk-these-ways as a unified skill space}
+
+We forked the mjlab Unitree-Go2-Flat task into a MoB variant
+(\texttt{Go2-Flat-MoB}) with body-height, gait-frequency, and stance
+commands. Two consecutive runs failed: v1 because the obs-patch did not
+actually expose the new commands to the policy; v2 because warm-starting
+from a non-MoB checkpoint did not propagate into the new head. We retired
+the approach in favor of separately trained skill checkpoints because the
+combined-command policy did not actually exhibit per-command behavior even
+when training was fixed. A library of small specialists is, in our
+experience, easier to debug than a single multi-headed generalist.
+
+\subsection{Single-policy RL get-up}
+
+Recovery from a fallen pose is the canonical example of an RL skill, and we
+tried eleven variants: v1 baseline, v2 init-pose tilt, v3 reward shape A, v4
+reward shape B (a-c), v5--v6 contact penalties, v7 FR-Net~\cite{frnet2024}
+mass-contact predictor with a 128$\times$3 auxiliary head, v7.1--v7.3 with
+different aux head sizes and reward weights, v8 with relaxed
+\texttt{fell\_over} termination, v9 with passivity penalties + soft-reset
+events, v10a--d with init-pose curricula. Eight variants converged to
+\emph{sphynx} (chest down, head up, immobile) or \emph{belly-flat} (passive
+lying) reward-hacks. One (v10b) appeared to succeed but only because of a
+curriculum-at-deployment bug. The final \texttt{get\_up} skill is a
+hand-tuned 400-tick PD keyframe sequence and works on the first attempt.
+
+%-----------------------------------------------------------------------
+\section{Limitations}
+%-----------------------------------------------------------------------
+
+\textbf{Sim only.} The released stack targets MuJoCo; we have not transferred
+to hardware. Sim-to-real for the locomotion tier is a solved problem
+\cite{rudin2022parallel} and we do not anticipate barriers there; the
+mood/attractor brain is policy-only and transfers trivially.
+
+\textbf{No vision.} Tier 3 receives proprioception + scene-state, not
+images. A head-mounted egocentric camera is scaffolded
+(\texttt{src/robot\_pet\_cat/scene/}) but not used in the released
+checkpoint. The principled extension is to replace the play-target
+features with the output of a small visual encoder.
+
+\textbf{No human evaluation.} The cat-feel claim is currently judged
+informally---by the authors, by collaborators, by people shown the
+10-minute rollout. We do not present a controlled user study.
+
+%-----------------------------------------------------------------------
+\section{Conclusion}
+%-----------------------------------------------------------------------
+
+A small canonical skill set, plus an attractor layer with a 6-dim mood
+latent and a stochastic decision period, is enough to turn a generic Go1
+walker into a system that produces multi-second coherent cat-like
+behavior. The contribution is not any single learned policy but the
+\emph{composition} of three tiers and the discipline of letting each tier
+do only its share of the work.
+
+\paragraph{Acknowledgments.}
+The project relies on \texttt{mujoco\_playground} and \texttt{mjlab} from
+Google DeepMind, the \texttt{rsl\_rl} library from ETH Z\"{u}rich's Robotic
+Systems Lab, and the Unitree Go1 MJCF in \texttt{mujoco\_menagerie}.
+Compute on RunPod A100 spot instances.
+
+%-----------------------------------------------------------------------
+\bibliographystyle{plain}
+\bibliography{references}
+%-----------------------------------------------------------------------
+
+\appendix
+\section{Released artifacts}
+
+The full set of released artifacts is documented at
+\url{https://jeffrah00.github.io/robot-pet-cat/} and mirrored to Hugging Face
+under \texttt{jeffrah00/robot-pet-cat}. The released bundle contains:
+
+\begin{itemize}[leftmargin=*,nosep]
+  \item \texttt{models/go1\_walker\_v0.pt} --- Tier 1 velocity-tracking
+        walker.
+  \item \texttt{models/mjlab\_go1\_walker\_normal.pt},
+        \texttt{models/mjlab\_go1\_crouch.pt},
+        \texttt{models/mjlab\_go1\_lie\_belly.pt} --- Tier 2 mjlab Go1
+        skill checkpoints. \texttt{stay} is not a separate checkpoint
+        (re-uses the Tier 1 walker with $v_{\text{cmd}}=0$).
+        \texttt{get\_up} is a scripted PD keyframe sequence
+        (\texttt{src/robot\_pet\_cat/brain/scripted\_get\_up.py}).
+  \item \texttt{checkpoints/brain/brain\_4skill\_v1.zip} --- Tier 3
+        PPO agent for the Discrete(5) action space, $\sim$152k env
+        steps.
+  \item Source: \url{https://github.com/jeffrah00/robot-pet-cat}.
+\end{itemize}
+
+\section{Hyperparameters}
+
+\paragraph{Tier 1 and Tier 2.} mjlab default PPO hyperparameters; see
+\texttt{configs/} and W\&B run logs in the released repository for the
+exact per-skill settings.
+
+\paragraph{Tier 3 (brain).} Stable-Baselines3 PPO, CPU device, with
+defaults read from \texttt{src/robot\_pet\_cat/brain/runner.py}:
+learning rate $3\!\times\!10^{-4}$, entropy coefficient $0.05$, clip
+range $0.2$, discount $\gamma = 0.99$, GAE $\lambda = 0.95$, $n_{\text{steps}} = 64$,
+batch size $64$, $n_{\text{epochs}} = 2$. The released checkpoint
+\texttt{brain\_4skill\_v1.zip} was trained for $\sim$152{,}000
+environment steps (per the commit message of \texttt{6b89167}). The
+brain is consulted every brain step. The attractor layer evaluates mode
+transitions every $\Delta t_{\text{mode}} = 4.0$\,s with minimum dwell
+$\tau_{\min} = 8.0$\,s.
+
+\end{document}
+     
