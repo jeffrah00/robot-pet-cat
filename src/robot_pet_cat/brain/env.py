@@ -366,6 +366,7 @@ class BrainEnv:
         self.active_skill_name = None
         self.time_in_skill = 0.0
         self._queued_walk_skill: Optional[str] = None  # walk guard: queued walk skill pending get_up
+        self._queued_lie_belly_skill: Optional[str] = None  # lie_belly guard: queued lie_belly pending crouch
         self.t_sim = 0.0
         if not self.cfg.use_physics_cat:
             self._reset_abstract_ball()
@@ -493,6 +494,22 @@ class BrainEnv:
                         # Still recovering: keep forcing crouch
                         new_skill_name = "crouch"
                         info["dispatched"] = "crouch (walk_guard_pending)"
+        # lie_belly guard: always route through crouch before lie_belly
+        if new_skill_name == "lie_belly" and self.active_skill_name != "crouch" and self._queued_walk_skill is None:
+            # Substitute crouch, queue lie_belly to fire once stable
+            self._queued_lie_belly_skill = new_skill_name
+            new_skill_name = "crouch"
+            info["dispatched"] = "crouch (lie_belly_guard)"
+        elif self._queued_lie_belly_skill is not None and self._queued_walk_skill is None:
+            if _upright:
+                # Stable: release queued lie_belly skill
+                new_skill_name = self._queued_lie_belly_skill
+                info["dispatched"] = new_skill_name + " (lie_belly_guard_released)"
+                self._queued_lie_belly_skill = None
+            else:
+                # Still recovering: keep forcing crouch
+                new_skill_name = "crouch"
+                info["dispatched"] = "crouch (lie_belly_guard_pending)"
 
         # Skill-commitment gate: a non-HOLD skill, once dispatched, persists
         # for at least cfg.min_skill_duration_s before the policy can switch
