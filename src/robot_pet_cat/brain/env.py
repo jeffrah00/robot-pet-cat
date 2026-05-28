@@ -369,6 +369,20 @@ class BrainEnv:
         self.t_sim = 0.0
         if not self.cfg.use_physics_cat:
             self._reset_abstract_ball()
+            # Spawn cat 1.0-1.5 m from ball so play reward is discoverable
+            import numpy as _np
+            _rng = _np.random.default_rng()
+            _angle = _rng.uniform(0.0, 2 * _np.pi)
+            _dist = _rng.uniform(1.0, 1.5)
+            _cat_xy = self._aball_pos + _np.array(
+                [_np.cos(_angle) * _dist, _np.sin(_angle) * _dist]
+            )
+            _cat_xy = tuple(_np.clip(_cat_xy, 0.1, 2.9).tolist())
+            self.cat.reset(
+                xy=_cat_xy,
+                yaw=self.cfg.initial_cat_yaw,
+                body_height=self.cfg.initial_body_height,
+            )
         self.episode_step = 0
         self.last_reward_breakdown = {}
         self._last_action = HOLD_ACTION

@@ -354,7 +354,7 @@ class PlayReward:
                    causal-credit -- a co-occurrence detector, not a model.
     """
 
-    paw_range_m: float = 0.4
+    paw_range_m: float = 1.5
     play_speed_weight: float = 1.0
     causal_bonus: float = 0.5
     causal_skills: tuple = ("swat",)
