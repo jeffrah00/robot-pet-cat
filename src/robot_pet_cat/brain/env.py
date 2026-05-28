@@ -367,6 +367,7 @@ class BrainEnv:
         self.time_in_skill = 0.0
         self._queued_walk_skill: Optional[str] = None  # walk guard: queued walk skill pending get_up
         self._queued_lie_belly_skill: Optional[str] = None  # lie_belly guard: queued lie_belly pending crouch
+        self._queued_crouch_skill: Optional[str] = None  # crouch guard: queued crouch pending deceleration
         self.t_sim = 0.0
         if not self.cfg.use_physics_cat:
             self._reset_abstract_ball()
@@ -495,6 +496,22 @@ class BrainEnv:
                         # Still recovering: keep forcing crouch
                         new_skill_name = "crouch"
                         info["dispatched"] = "crouch (walk_guard_pending)"
+        # crouch guard: decelerate via stay before crouching from walk
+        if new_skill_name == "crouch" and self.active_skill_name == "walk" and self._queued_crouch_skill is None:
+            # Substitute stay to let robot decelerate
+            self._queued_crouch_skill = new_skill_name
+            new_skill_name = "stay"
+            info["dispatched"] = "stay (crouch_guard)"
+        elif self._queued_crouch_skill is not None and self.active_skill_name == "stay":
+            if self.cat.last_speed < 0.1 or self.time_in_skill >= 1.0:
+                # Slow enough or dwell elapsed: release queued crouch
+                new_skill_name = self._queued_crouch_skill
+                info["dispatched"] = new_skill_name + " (crouch_guard_released)"
+                self._queued_crouch_skill = None
+            else:
+                # Still moving: keep in stay
+                new_skill_name = "stay"
+                info["dispatched"] = "stay (crouch_guard_pending)"
         # lie_belly guard: always route through crouch before lie_belly
         if new_skill_name == "lie_belly" and self.active_skill_name != "crouch" and self._queued_walk_skill is None:
             # Substitute crouch, queue lie_belly to fire once stable
