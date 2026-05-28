@@ -109,7 +109,7 @@ def train_brain(cfg: BrainTrainConfig) -> Any:
             return True
 
         def _on_rollout_end(self) -> None:
-            curiosity = env.brain.curiosity
+            curiosity = env.curiosity
             if curiosity is None or not self._batch:
                 self._batch = []
                 return

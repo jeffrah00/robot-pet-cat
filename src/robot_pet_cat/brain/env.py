@@ -367,6 +367,8 @@ class BrainEnv:
         self.time_in_skill = 0.0
         self._queued_walk_skill: Optional[str] = None  # walk guard: queued walk skill pending get_up
         self.t_sim = 0.0
+        if not self.cfg.use_physics_cat:
+            self._reset_abstract_ball()
         self.episode_step = 0
         self.last_reward_breakdown = {}
         self._last_action = HOLD_ACTION
@@ -519,6 +521,8 @@ class BrainEnv:
 
         self.time_in_skill += self.cfg.dt_s
         self.t_sim += self.cfg.dt_s
+        if not self.cfg.use_physics_cat:
+            self._step_abstract_ball()
         self.episode_step += 1
 
         # Update mood and (if present) mode policy
@@ -599,13 +603,59 @@ class BrainEnv:
             obs["cat_eye_img"] = (img_rgb.mean(axis=2) / 255.0).astype(np.float32)
         return obs
 
+    # ── Abstract ball dynamics (use_physics_cat=False only) ─────────────────────
+
+    def _reset_abstract_ball(self) -> None:
+        import numpy as _np
+        rng = _np.random.default_rng()
+        self._aball_pos = rng.uniform(0.3, 2.7, size=2).astype(float)
+        angle = rng.uniform(0.0, 2 * _np.pi)
+        speed = rng.uniform(0.3, 0.6)
+        self._aball_vel = _np.array([_np.cos(angle) * speed, _np.sin(angle) * speed])
+        self._aball_next_kick = float(rng.uniform(3.0, 7.0))
+
+    def _step_abstract_ball(self) -> None:
+        import numpy as _np
+        dt = self.cfg.dt_s
+        self._aball_pos = self._aball_pos + self._aball_vel * dt
+        for i in range(2):
+            if self._aball_pos[i] < 0.0:
+                self._aball_pos[i] = 0.0
+                self._aball_vel[i] = abs(self._aball_vel[i])
+            elif self._aball_pos[i] > 3.0:
+                self._aball_pos[i] = 3.0
+                self._aball_vel[i] = -abs(self._aball_vel[i])
+        self._aball_vel = self._aball_vel * 0.98
+        self._aball_next_kick -= dt
+        if self._aball_next_kick <= 0.0:
+            rng = _np.random.default_rng()
+            angle = rng.uniform(0.0, 2 * _np.pi)
+            speed = rng.uniform(0.3, 0.8)
+            self._aball_vel = _np.array([_np.cos(angle) * speed, _np.sin(angle) * speed])
+            self._aball_next_kick = float(rng.uniform(3.0, 7.0))
+
     def _extract_scene_state(self) -> SceneState:
-        return extract_scene_state(
+        state = extract_scene_state(
             self.mj_model,
             self.mj_data,
             flag_config=self.flag_config,
             movable_bodies=self.movable_bodies,
         )
+        if not self.cfg.use_physics_cat and hasattr(self, "_aball_pos"):
+            import numpy as _np
+            import dataclasses as _dc
+            new_entities = []
+            for ent in state.entities:
+                if ent.name == "ball":
+                    vel3 = _np.array([self._aball_vel[0], self._aball_vel[1], 0.0])
+                    pos3 = ent.pos_xyz.copy()
+                    pos3[0] = self._aball_pos[0]
+                    pos3[1] = self._aball_pos[1]
+                    ent = _dc.replace(ent, pos_xyz=pos3, velocity_xyz=vel3)
+                new_entities.append(ent)
+            state = _dc.replace(state, entities=new_entities)
+        return state
+
 
     def _cat_state_for_rewards(self) -> CatState:
         return CatState(
