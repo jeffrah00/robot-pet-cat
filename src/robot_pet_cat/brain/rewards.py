@@ -287,24 +287,22 @@ class ComfortReward:
     Subterms are in [0, 1]; composite is in [0, sum(weights)].
     """
 
-    elevated_weight: float = 0.4
-    soft_weight: float = 0.4
+    soft_weight: float = 0.8
     warm_weight: float = 0.2
     footprint_padding_m: float = 0.05
     height_tolerance_m: float = 0.15
     warm_sigma_m: float = 1.0
+    soft_sigma_m: float = 1.0
 
     # Hard-coded for v0 living-room couch. A future revision should read
     # half-size from scene metadata so the reward generalizes.
     _COUCH_HALF_SIZE_XY = (0.6, 0.3)
 
     def compute(self, scene_state: "SceneState", cat: CatState) -> float:
-        elev = self._on_elevated(scene_state, cat)
         soft = self._on_soft(scene_state, cat)
         warm = self._warmth_proximity(scene_state, cat)
         return (
-            self.elevated_weight * elev
-            + self.soft_weight * soft
+            self.soft_weight * soft
             + self.warm_weight * warm
         )
 
@@ -322,16 +320,15 @@ class ComfortReward:
             return 0.0
         return 1.0
 
-    def _on_elevated(self, scene_state: "SceneState", cat: CatState) -> float:
-        best = 0.0
-        for ent in scene_state.filter(elevated=True):
-            best = max(best, self._on_entity(ent, cat))
-        return best
-
     def _on_soft(self, scene_state: "SceneState", cat: CatState) -> float:
+        # Gaussian proximity to nearest soft entity, sigma=soft_sigma_m
         best = 0.0
         for ent in scene_state.filter(soft=True):
-            best = max(best, self._on_entity(ent, cat))
+            dx = float(cat.xy[0] - ent.pos_xyz[0])
+            dy = float(cat.xy[1] - ent.pos_xyz[1])
+            d = float(np.hypot(dx, dy))
+            score = float(np.exp(-0.5 * (d / self.soft_sigma_m) ** 2))
+            best = max(best, score)
         return best
 
     def _warmth_proximity(self, scene_state: "SceneState", cat: CatState) -> float:
