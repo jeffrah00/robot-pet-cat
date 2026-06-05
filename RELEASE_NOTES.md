@@ -18,7 +18,6 @@
 | `skills/stay_v1.pt` | ~160 KB | Tier 2 — freeze current joint config |
 | `brain/brain_4skill_v1.zip` | 160 KB | Tier 3 — SB3 PPO, Discrete(5) action space |
 
-All weights mirrored to https://huggingface.co/jeffrah00/robot-pet-cat.
 
 ### Renders
 - `renders/brain_4skill_10min.mp4` — headline 10-min autonomous rollout
