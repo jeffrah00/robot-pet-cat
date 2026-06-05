@@ -512,8 +512,11 @@ Compute on RunPod A100 spot instances.
 \appendix
 \section{Released artifacts}
 
+\begin{sloppypar}
 The full set of released artifacts is documented at
-\url{https://jeffrah00.github.io/robot-pet-cat/} . The released bundle contains:
+\url{https://jeffrah00.github.io/robot-pet-cat/}.
+\end{sloppypar}
+The released bundle contains:
 
 \begin{itemize}[leftmargin=*,nosep]
   \item \texttt{models/mjlab\_go1\_walker\_normal.pt} --- Tier 1 velocity-tracking
@@ -533,11 +536,12 @@ The full set of released artifacts is documented at
 \texttt{configs/} and W\&B run logs in the released repository for the
 exact per-skill settings.
 
+\begin{sloppypar}
 \paragraph{Tier 3 (brain).} Stable-Baselines3 PPO, CPU device, with
-defaults read from \texttt{src/robot\_pet\_cat/brain/runner.py}:
-learning rate $3\!\times\!10^{-4}$, entropy coefficient $0.05$, clip
-range $0.2$, discount $\gamma = 0.99$, GAE $\lambda = 0.95$, $n_{\text{steps}} = 64$,
-batch size $64$, $n_{\text{epochs}} = 2$. The released checkpoint
+defaults read from \texttt{brain/runner.py}:
+learning rate $3\!\times\!10^{-4}$, entropy coeff.\ $0.05$, clip range $0.2$,
+discount $\gamma = 0.99$, GAE $\lambda = 0.95$, $n_{\text{steps}} = 64$,
+batch $64$, $n_{\text{epochs}} = 2$. The released checkpoint
 \texttt{brain\_4skill\_v1.zip} was trained for $\sim$152{,}000
 environment steps (per the commit message of \texttt{6b89167}). The
 brain is consulted every brain step. The attractor layer evaluates mode
