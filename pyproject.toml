@@ -42,7 +42,6 @@ brain = [
     "gymnasium>=1.0",
     "stable-baselines3>=2.3",
     "wandb>=0.17",
-    "huggingface-hub>=0.24",
 ]
 
 retargeting = [
