@@ -225,24 +225,24 @@ Skill & Checkpoint & Implementation \\
 \begin{figure}[t]
   \centering
   \begin{subfigure}[b]{0.24\linewidth}
-    \includegraphics[width=\linewidth]{figures/frame_v5_6s.png}
-    \caption{\texttt{stay}}
+    \includegraphics[width=\linewidth]{figures/rnd_f1.png}
+    \caption{\texttt{walk}, t=5\,s}
   \end{subfigure}\hfill
   \begin{subfigure}[b]{0.24\linewidth}
-    \includegraphics[width=\linewidth]{figures/frame_v5_8s.png}
-    \caption{\texttt{walk}}
+    \includegraphics[width=\linewidth]{figures/rnd_f2.png}
+    \caption{\texttt{crouch}, t=38\,s}
   \end{subfigure}\hfill
   \begin{subfigure}[b]{0.24\linewidth}
-    \includegraphics[width=\linewidth]{figures/frame_v5_10s.png}
-    \caption{\texttt{crouch}}
+    \includegraphics[width=\linewidth]{figures/rnd_f3.png}
+    \caption{\texttt{stay}, t=226\,s}
   \end{subfigure}\hfill
   \begin{subfigure}[b]{0.24\linewidth}
-    \includegraphics[width=\linewidth]{figures/frame_v5_12s.png}
-    \caption{\texttt{lie\_belly}}
+    \includegraphics[width=\linewidth]{figures/rnd_f4.png}
+    \caption{\texttt{crouch}, t=270\,s}
   \end{subfigure}
-  \caption{The four skills in the MuJoCo household scene. Frames sampled from
-  a 5-minute autonomous brain rollout (\texttt{brain3d\_random\_5min.mp4}).
-  Debug overlay is visible in simulation only.}
+  \caption{Four frames from the 5-minute autonomous brain rollout
+  (\texttt{brain3d\_random\_5min.mp4}). No external commands; the brain
+  selects skills autonomously. Debug overlay visible in simulation only.}
   \label{fig:skills}
 \end{figure}
 
@@ -547,6 +547,6 @@ environment steps (per the commit message of \texttt{6b89167}). The
 brain is consulted every brain step. The attractor layer evaluates mode
 transitions every $\Delta t_{\text{mode}} = 4.0$\,s with minimum dwell
 $\tau_{\min} = 8.0$\,s.
-
+\end{sloppypar}
 \end{document}
      
