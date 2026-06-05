@@ -26,7 +26,7 @@
 
 \title{How to Make a Robot Pet Cat\\
 \large Part 1 --- Brain}
-\author{K. Jeff Rah}
+\author{Jeffrey Rah}
 \affil{Independent\\\texttt{jeffrah89@gmail.com}}
 \date{May 2026}
 
@@ -47,7 +47,7 @@ categorical head into persistent multi-second modes, and a stochastic
 decision period that breaks the metronomic switching pattern of fixed-tick
 hierarchical RL. The brain runs on top of a small substrate---a Go1
 velocity-tracking walker (Tier~1) and a deliberately minimal skill library
-of four learned skills plus one scripted recovery (Tier~2)---both of which we
+of four learned skills (Tier~2)---both of which we
 also describe and release. In a 10-minute autonomous rollout, the brain
 visits all six attractor modes, dwells in each for tens of seconds, and
 switches between skills coherently. We also document what \emph{did not
@@ -108,7 +108,7 @@ skill-thrashing into recognizable, persistent feline behavior.
   \item \textbf{(substrate)} A reproducible three-tier learning stack
         the brain runs on, open-sourced under MIT.
   \item \textbf{(substrate)} An empirical demonstration that a
-        \emph{small} canonical skill set (four learned + one scripted) is
+        \emph{small} canonical skill set (four learned) is
         sufficient---more skills do not help.
   \item \textbf{(negative results)} A documented record of three failed
         paradigms (AMP imitation, MoB skill space, single-policy get-up
@@ -215,7 +215,7 @@ Skill & Checkpoint & Implementation \\
 \texttt{crouch}    & \texttt{models/mjlab\_go1\_crouch.pt}        & PPO, mjlab Go1 crouch task \\
 \texttt{lie\_belly} & \texttt{models/mjlab\_go1\_lie\_belly.pt}    & PPO, mjlab Go1 lie task \\
 \texttt{stay}      & (walker checkpoint, $v_{\text{cmd}}=0$)      & re-uses Tier 1 walker \\
-\texttt{get\_up}   & \texttt{src/.../scripted\_get\_up.py}         & Scripted PD keyframe \\
+\texttt{get\_up}   & \texttt{src/.../scripted\_get\_up.py}         & Scripted PD keyframe (auto-triggered on fall; not a brain action) \\
 \bottomrule
 \end{tabular}
 \end{center}
