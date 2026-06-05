@@ -23,11 +23,9 @@ produces emergent cat-like behavior rather than scripted robot-pet behavior.
 
 - [ ] All accounts in [`ACCOUNTS.md`](ACCOUNTS.md) created and verified
 - [ ] GitHub repo created and this scaffold pushed
-- [ ] Hugging Face username noted, `huggingface-cli login` works locally
 - [ ] RunPod (or Lambda) account funded with $20 to start
 - [ ] W&B account created, API key saved
 
-**Done when:** `huggingface-cli whoami` and `wandb login --verify` both succeed.
 
 ---
 
@@ -67,7 +65,6 @@ effort, not the multi-week dataset operation the previous plan described.
       style reward from the AMP discriminator
 - [ ] First training run: ~50M env steps, 1× A100, ~6-8 hours, ~$10-15 on
       RunPod spot
-- [ ] Push checkpoint to `jeffrah00/go2-cat-motion` on Hugging Face
 
 **Done when:** the policy follows a scripted velocity sequence on video, doesn't
 fall, and a human who's never seen the project says "that looks more like a cat
@@ -161,7 +158,6 @@ couch in some sessions. Different sessions produce different sequences.
       stationary skills — this is the one place a tiny scripted touch helps)
 - [ ] Record a 60-second demo video showing all three target behaviors plus
       ambient cat-vibe motion
-- [ ] Push to a public Hugging Face Space
 - [ ] Write a blog post / README walkthrough
 
 ---
