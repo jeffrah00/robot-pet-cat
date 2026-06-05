@@ -423,20 +423,8 @@ MuJoCo + Unitree Go1</div>
       resulting policy moved zero meters in five seconds. We moved
       cat-feel up to Tier 3.
     </div>
-    <div class="negative">
-      <b>walk-these-ways as a unified skill space.</b> Forked the mjlab
-      Go2-Flat task into a MoB variant with body-height, gait-frequency,
-      and stance commands. Two consecutive runs failed to actually expose
-      the new commands to the policy. We use separate skill checkpoints.
-    </div>
-    <div class="negative">
-      <b>Single-policy RL get-up.</b> Eleven variants (v1–v10 plus FR-Net
-      auxiliary head). Eight converged to <em>sphynx</em> or
-      <em>belly-flat</em> reward-hacks. One looked successful but only
-      because of a curriculum-at-deployment bug. The final
-      <code>get_up</code> is a 400-tick scripted PD keyframe and works on
-      the first try.
-    </div>
+    
+    
   </section>
 
   <section>
