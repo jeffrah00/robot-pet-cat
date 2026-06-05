@@ -141,10 +141,8 @@ Short version:
 
 - **AMP imitation track** — `cat_imitation_v1.pkl` produced zero forward
   motion under velocity commands. Cat-feel moved up to Tier 3.
-- **walk-these-ways as a unified skill space** — combined-command policy
-  did not exhibit per-command behavior. We use separate skill checkpoints.
-- **Single-policy RL get-up** — eleven variants, eight reward-hacks. The
-  final `get_up` skill is a scripted 400-tick PD keyframe.
+
+
 
 ---
 
