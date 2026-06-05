@@ -263,67 +263,7 @@ MuJoCo + Unitree Go1</div>
       help.
     </p>
 
-    <h3>Why three pieces, specifically</h3>
-    <p>
-      <span class="pill">attractors</span> A low-frequency mode-transition
-      policy picks one of six behavioral modes (<em>resting</em>,
-      <em>observing</em>, <em>stalking</em>, <em>playing</em>,
-      <em>grooming</em>, <em>exploring</em>). Each mode exposes a coherent
-      subset of skills via an action mask. Without this, the brain
-      thrashes between skills every tick.
-    </p>
-    <p>
-      <span class="pill">mood</span> A 6-vector Ornstein–Uhlenbeck latent.
-      Three of its dimensions, passed through a sigmoid, are the weights
-      on the curiosity / comfort / play reward streams. Behavior shifts
-      gradually rather than discretely — a sleepy cat takes minutes to
-      become a playful one.
-    </p>
-    <p>
-      <span class="pill">stochastic decision period</span> The brain is
-      consulted every <code>T ~ U(1.5, 4.0) s</code>, not on a fixed
-      clock. This single change eliminates the metronomic 2 Hz switching
-      pattern that a fixed-tick categorical head produces, without any
-      retraining.
-    </p>
   </section>
-
-  <section>
-    <h2>Skill library</h2>
-    <p>
-      Four learned skills, one scripted recovery. Earlier versions of the
-      system carried fifteen named skills; we converged here after the
-      <em>faking-is-enough</em> principle: scripted PD for postures, RL
-      only where RL is necessary.
-    </p>
-    <div class="video-grid">
-      <div class="video-card">
-        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain/brain_walker_perm_fix_v1.mp4" controls muted loop preload="metadata"></video>
-        <div class="label"><strong>walk</strong>Go1 mjlab velocity-tracking walker.</div>
-      </div>
-      <div class="video-card">
-        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/crouch_v8_render.mp4" controls muted loop preload="metadata"></video>
-        <div class="label"><strong>crouch</strong>Stable crouch posture, 489-step episode.</div>
-      </div>
-      <div class="video-card">
-        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/skills/lie_belly_go1_v3.mp4" controls muted loop preload="metadata"></video>
-        <div class="label"><strong>lie_belly</strong>Belly-down loaf pose.</div>
-      </div>
-      <div class="video-card">
-        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain/brain_scripted_stay_first_v1.mp4" controls muted loop preload="metadata"></video>
-        <div class="label"><strong>stay</strong>Freeze current joint config.</div>
-      </div>
-      <div class="video-card">
-        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain/brain_getup_fixed_v3_real_policy.mp4" controls muted loop preload="metadata"></video>
-        <div class="label"><strong>get_up</strong>Scripted PD keyframe sequence (not RL).</div>
-      </div>
-      <div class="video-card">
-        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain/brain_4skill_10min.mp4" controls muted loop preload="metadata"></video>
-        <div class="label"><strong>brain (composed)</strong>10-min autonomous rollout.</div>
-      </div>
-    </div>
-  </section>
-
 
   <section>
     <h2>How it works</h2>
@@ -409,6 +349,44 @@ MuJoCo + Unitree Go1</div>
     the policy architecture. Entropy regularization (ent_coef&nbsp;=&nbsp;0.05) is critical
     to prevent collapse to a single dominant skill.</p>
   </section>
+
+  <section>
+    <h2>Skill library</h2>
+    <p>
+      Four learned skills, one scripted recovery. Earlier versions of the
+      system carried fifteen named skills; we converged here after the
+      <em>faking-is-enough</em> principle: scripted PD for postures, RL
+      only where RL is necessary.
+    </p>
+    <div class="video-grid">
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain/brain_walker_perm_fix_v1.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>walk</strong>Go1 mjlab velocity-tracking walker.</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/crouch_v8_render.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>crouch</strong>Stable crouch posture, 489-step episode.</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/skills/lie_belly_go1_v3.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>lie_belly</strong>Belly-down loaf pose.</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain/brain_scripted_stay_first_v1.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>stay</strong>Freeze current joint config.</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain/brain_getup_fixed_v3_real_policy.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>get_up</strong>Scripted PD keyframe sequence (not RL).</div>
+      </div>
+      <div class="video-card">
+        <video src="https://github.com/jeffrah00/robot-pet-cat/raw/main/renders/brain/brain_4skill_10min.mp4" controls muted loop preload="metadata"></video>
+        <div class="label"><strong>brain (composed)</strong>10-min autonomous rollout.</div>
+      </div>
+    </div>
+  </section>
+
+
 
   <section>
     <h2>What we tried and removed</h2>
