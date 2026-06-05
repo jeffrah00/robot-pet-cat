@@ -7,7 +7,6 @@ what to do moment by moment.
 
 **Paper:** [`paper/paper.pdf`](paper/paper.pdf) (arXiv submission in progress)
 **Project page:** https://jeffrah00.github.io/robot-pet-cat/
-**Hugging Face:** https://huggingface.co/jeffrah00/robot-pet-cat
 **License:** MIT
 
 <p align="center">
@@ -83,7 +82,7 @@ Tested with Python 3.11, MuJoCo 3.5.0, PyTorch 2.4 (cu124), Stable-Baselines3
 `stay` is not a separate checkpoint — it re-uses the Tier 1 walker with the
 velocity command pinned to zero.
 
-All weights are mirrored to https://huggingface.co/jeffrah00/robot-pet-cat.
+All weights are in the `models/` folder on GitHub.
 
 ---
 
