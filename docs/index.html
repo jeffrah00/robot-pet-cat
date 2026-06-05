@@ -327,28 +327,55 @@ MuJoCo + Unitree Go1</div>
 
   <section>
     <h2>How it works</h2>
-    <p>Three cooperating loops at different timescales:</p>
 
-    <p><strong>Mood latent.</strong> A 6-dim Ornstein&ndash;Uhlenbeck vector drifts continuously
-    (&theta;&nbsp;=&nbsp;0.05/60&nbsp;s&sup;&#x207B;&sup1;, &sigma;&nbsp;=&nbsp;0.02, &tau;&nbsp;&asymp;&nbsp;20&nbsp;min).
-    Dims&nbsp;0&ndash;2 bias the mode-transition softmax (energy, alertness, sociability).
-    Dims&nbsp;3&ndash;5 set the curiosity, comfort, and play reward weights via
-    &sigma;(2&middot;x) &mdash; so a curious mood literally changes what the cat is rewarded for.</p>
+    <svg viewBox="0 0 680 210" xmlns="http://www.w3.org/2000/svg"
+         style="width:100%;max-width:680px;display:block;margin:1.5rem auto 2rem;font-family:inherit">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#888"/>
+        </marker>
+      </defs>
+      <!-- boxes -->
+      <rect x="20"  y="60" width="160" height="90" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <rect x="260" y="60" width="160" height="90" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <rect x="500" y="60" width="160" height="90" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <!-- labels -->
+      <text x="100" y="94"  text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="600">Mood latent</text>
+      <text x="100" y="112" text-anchor="middle" fill="#94a3b8" font-size="11">6-dim OU process</text>
+      <text x="100" y="128" text-anchor="middle" fill="#94a3b8" font-size="11">drifts over ~20 min</text>
+      <text x="340" y="94"  text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="600">Attractor</text>
+      <text x="340" y="112" text-anchor="middle" fill="#94a3b8" font-size="11">picks behavioral mode</text>
+      <text x="340" y="128" text-anchor="middle" fill="#94a3b8" font-size="11">every ~8–30 s</text>
+      <text x="580" y="94"  text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="600">PPO brain</text>
+      <text x="580" y="112" text-anchor="middle" fill="#94a3b8" font-size="11">picks skill</text>
+      <text x="580" y="128" text-anchor="middle" fill="#94a3b8" font-size="11">every 1.5–4 s</text>
+      <!-- arrows mood → attractor -->
+      <line x1="180" y1="90" x2="256" y2="90" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="218" y="84" text-anchor="middle" fill="#64748b" font-size="10">mode bias</text>
+      <!-- arrows mood → ppo (reward weights, curved down) -->
+      <path d="M 100 150 Q 100 190 340 190 Q 580 190 580 154" fill="none" stroke="#888" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr)"/>
+      <text x="340" y="202" text-anchor="middle" fill="#64748b" font-size="10">reward weights (curiosity / comfort / play)</text>
+      <!-- arrows attractor → ppo -->
+      <line x1="420" y1="105" x2="496" y2="105" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="458" y="99" text-anchor="middle" fill="#64748b" font-size="10">allowed skills</text>
+      <!-- bottom label -->
+      <text x="580" y="172" text-anchor="middle" fill="#64748b" font-size="10">→ walk / crouch / lie_belly / stay</text>
+    </svg>
 
-    <p><strong>Behavioral attractor.</strong> Six modes (RESTING, OBSERVING, STALKING, PLAYING,
-    GROOMING, EXPLORING) sampled from a mood-biased softmax with temperature&nbsp;T&nbsp;=&nbsp;0.8.
-    A transition is only considered after the cat has held the current mode for &ge;&nbsp;8&nbsp;s.
-    Each mode exposes a subset of skills; out-of-mode actions are suppressed with 70% probability
-    (30% soft-pass). Walk is hard-blocked in RESTING and GROOMING.</p>
+    <p><strong>Mood</strong> is a slow internal state — imagine a cat&rsquo;s energy level and curiosity
+    changing gradually across the day. It drifts on its own without any external input, pulling the
+    cat toward different behavioral modes depending on how it currently feels.</p>
 
-    <p><strong>PPO brain.</strong> 15-dim flat obs (mood[6], XY[2], cos/sin&nbsp;yaw[2], height[1],
-    speed[1], time-in-skill[1], play-target &Delta;xy[2]). Discrete(6) action space &mdash;
-    index&nbsp;0 is HOLD, indices&nbsp;1&ndash;5 are the five skills. The brain is queried every
-    T&nbsp;~&nbsp;U(1.5,&nbsp;4.0)&nbsp;s so the robot doesn&rsquo;t thrash at 20&nbsp;Hz.
-    Key hyperparameter: <code>ent_coef&nbsp;=&nbsp;0.05</code> &mdash; without entropy regularization
-    the policy collapses to a single skill. Reward is a mood-weighted sum of four streams:
-    comfort (Gaussian proximity, &sigma;=1&nbsp;m), play (ball speed within 1.5&nbsp;m),
-    curiosity (ICM forward-model error), and hold (stillness bonus).</p>
+    <p><strong>The attractor</strong> decides which mode the cat is in right now: resting, observing,
+    stalking, playing, grooming, or exploring. It reads the current mood and samples a new mode every
+    so often, but won&rsquo;t switch until the cat has stayed in the current mode long enough. Each mode
+    only allows certain skills — a resting cat can&rsquo;t break into a walk.</p>
+
+    <p><strong>The PPO brain</strong> picks the actual skill to execute, choosing from whatever the
+    current mode allows. It doesn&rsquo;t decide every physics step — it commits to a skill for a
+    few seconds at a time, which is why the rollout looks deliberate rather than jittery.
+    The reward signal it learns from is also shaped by mood: a curious cat gets more reward for
+    exploring new areas, a comfortable cat gets more reward for staying near the couch.</p>
   </section>
 
   <section>
