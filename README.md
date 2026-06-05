@@ -10,8 +10,8 @@ what to do moment by moment.
 **License:** MIT
 
 <p align="center">
-  <em>10-minute autonomous rollout:</em><br>
-  <code>renders/brain_4skill_10min.mp4</code>
+  <em>5-min autonomous rollout:</em><br>
+  <code>renders/brain3d_random_5min.mp4</code>
 </p>
 
 ---
@@ -121,13 +121,13 @@ python -m robot_pet_cat.skills.train --skill stay
 python -m robot_pet_cat.brain.runner --total-timesteps 20_000_000
 ```
 
-The paper's 10-minute rollout (`renders/brain_4skill_10min.mp4`) is
+The paper's 5-min rollout (`renders/brain3d_random_5min.mp4`) is
 reproduced by:
 
 ```bash
 python scripts/render_brain_3d.py \
     --checkpoint checkpoints/brain/brain_4skill_v1.zip \
-    --duration 600 --output renders/brain_4skill_10min.mp4
+    --duration 600 --output renders/brain3d_random_5min.mp4
 ```
 
 ---
