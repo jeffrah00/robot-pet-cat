@@ -324,6 +324,257 @@ MuJoCo + Unitree Go1</div>
     </div>
   </section>
 
+
+  <section>
+    <h2>How it works &mdash; algorithm details</h2>
+    <p>
+      The brain is three cooperating loops at different timescales: a slow
+      <em>mood latent</em> that drifts over minutes, a
+      <em>mode-transition attractor</em> that commits to behavioral modes over
+      tens of seconds, and a fast <em>PPO skill policy</em> that picks among
+      the active mode&rsquo;s skills every 1.5&ndash;4&nbsp;s. This section gives the exact
+      numbers from the source.
+    </p>
+
+    <h3>1 &middot; Mood latent &mdash; 6-dim Ornstein&ndash;Uhlenbeck process</h3>
+    <p>
+      A 6-element vector <code>state &isin; [&minus;1,&nbsp;1]&sup6;</code> drifts continuously.
+      Once per sim step (<code>dt = 0.05 s</code>) <code>Mood.update(dt)</code>
+      applies:
+    </p>
+    <div class="stack">state &larr; state &minus; &theta; &middot; state &middot; dt  +  &sigma; &middot; &radic;dt &middot; &epsilon;,    &epsilon; ~ N(0, I&sub6;)
+clip(state, &minus;1, 1)
+
+&theta;  (mean-reversion rate) = decay_per_minute / 60 = 0.05 / 60 &asymp; 8.3 &times; 10&sup;&#x207B;&#x2074; s&sup;&#x207B;&sup1;
+&sigma;  (noise per &radic;s)        = 0.02
+&tau;  (OU time constant)    = 1 / &theta; &asymp; 1&hairsp;200 s  &asymp; 20 min</div>
+    <p>
+      The six dimensions have fixed semantic roles:
+    </p>
+    <table class="weights">
+      <thead>
+        <tr><th>Index</th><th>Name</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>0</code></td><td>energy</td>
+          <td>Biases PLAYING and EXPLORING mode logits when high</td>
+        </tr>
+        <tr>
+          <td><code>1</code></td><td>alertness</td>
+          <td>Biases OBSERVING and STALKING mode logits when high</td>
+        </tr>
+        <tr>
+          <td><code>2</code></td><td>sociability</td>
+          <td>General attractor bias; reserved for social-distance reward (v2)</td>
+        </tr>
+        <tr>
+          <td><code>3</code></td><td>curiosity_w</td>
+          <td>Reward weight: <code>&sigma;(2&middot;state[3])</code> scales the curiosity stream</td>
+        </tr>
+        <tr>
+          <td><code>4</code></td><td>comfort_w</td>
+          <td>Reward weight: <code>&sigma;(2&middot;state[4])</code> scales the comfort stream</td>
+        </tr>
+        <tr>
+          <td><code>5</code></td><td>play_w</td>
+          <td>Reward weight: <code>&sigma;(2&middot;state[5])</code> scales the play stream</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      The sigmoid is <code>&sigma;(x) = 1 / (1 + e<sup>&minus;2x</sup>)</code>,
+      mapping the OU range [&minus;1, 1] onto approximately [0.12, 0.88].
+      Dimensions 3&ndash;5 are the only ones read by the reward composer;
+      dimensions 0&ndash;2 provide additional logit bias to the mode-transition
+      softmax via <code>_mode_bias_from_mood</code> in <code>attractor.py</code>.
+      At startup <code>state&nbsp;~&nbsp;U(&minus;0.1,&nbsp;0.4)</code>, so the cat begins
+      curious and energetic rather than inert.
+    </p>
+
+    <h3>2 &middot; Behavioral attractor &mdash; 6 modes, mood-biased softmax</h3>
+    <p>
+      <code>ModePolicy.tick(dt,&nbsp;mood)</code> runs every step but only considers a
+      mode transition when two gates are satisfied simultaneously:
+      the cat has dwelled in the current mode for at least
+      <code>min_dwell_s&nbsp;=&nbsp;8.0&nbsp;s</code>, <em>and</em> a decision-cadence timer
+      of <code>decision_period_s&nbsp;=&nbsp;4.0&nbsp;s</code> has elapsed.
+      When both fire, the next mode is sampled from:
+    </p>
+    <div class="stack">logit(RESTING)   = 1.0 &middot; w_com
+logit(OBSERVING) = 0.5 &middot; w_cur  +  0.2 &middot; w_play
+logit(STALKING)  = 0.5 &middot; w_cur  +  0.6 &middot; w_play
+logit(PLAYING)   = 1.0 &middot; w_play
+logit(GROOMING)  = 0.3 &middot; w_com
+logit(EXPLORING) = 1.0 &middot; w_cur
+
+where (w_cur, w_com, w_play) = mood.weights()   [each in (0, 1)]
+
+p(mode) = softmax(logit / T),    T = 0.8  (transition_temperature)</div>
+    <p>
+      If the sampled mode differs from the current one, <code>time_in_mode</code>
+      resets to zero, restarting the minimum-dwell gate. This produces
+      multi-minute behavioral episodes without explicit timers.
+    </p>
+    <p>
+      Each mode exposes a coherent subset of skills. The full per-mode
+      allow-lists and hard-blocked skills are:
+    </p>
+    <table class="weights">
+      <thead>
+        <tr><th>Mode</th><th>Allowed skills</th><th>Hard-blocked (ignores soft-pass)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>RESTING</td>   <td><code>lie_belly, crouch, get_up, stay</code></td><td><code>walk</code></td></tr>
+        <tr><td>OBSERVING</td> <td><code>crouch, get_up, stay</code></td>             <td>&mdash;</td></tr>
+        <tr><td>STALKING</td>  <td><code>crouch, get_up, stay</code></td>             <td>&mdash;</td></tr>
+        <tr><td>PLAYING</td>   <td><code>walk, get_up</code></td>                     <td>&mdash;</td></tr>
+        <tr><td>GROOMING</td>  <td><code>lie_belly, crouch, get_up, stay</code></td><td><code>walk</code></td></tr>
+        <tr><td>EXPLORING</td> <td><code>walk, get_up</code></td>                     <td>&mdash;</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <span class="pill">soft-pass</span>
+      Out-of-mode actions are suppressed with probability
+      <code>1 &minus; mode_soft_pass = 0.70</code> and let through with probability
+      <code>mode_soft_pass = 0.30</code>. Hard-blocked skills bypass the
+      coin flip entirely &mdash; <code>walk</code> never fires in RESTING or GROOMING
+      regardless of the policy output.
+    </p>
+    <p>
+      <span class="pill">stochastic decision period</span>
+      The skill policy is not queried every sim step. After each skill
+      selection the env draws a fresh commitment window
+      <code>T&nbsp;~&nbsp;U(decision_period_min_steps,&nbsp;decision_period_max_steps)&nbsp;&times;&nbsp;dt</code>.
+      In the 10-min rollout this was configured as 30&ndash;80 steps at
+      <code>dt&nbsp;=&nbsp;0.05&nbsp;s</code>, giving <code>T&nbsp;~&nbsp;U(1.5,&nbsp;4.0)&nbsp;s</code>.
+      Within each window the previous skill repeats, so the robot commits
+      to an action rather than thrashing at 20&nbsp;Hz.
+    </p>
+
+    <h3>3 &middot; PPO brain &mdash; observation, action space, and reward</h3>
+
+    <p>
+      <strong>Observation space: 15-dim flat vector</strong>
+      (defined in <code>curiosity_feat.py</code> as <code>CURIOSITY_OBS_DIM_V0 = 15</code>).
+    </p>
+    <table class="weights">
+      <thead>
+        <tr><th>Slice</th><th>Dims</th><th>Content</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>[0:6]</code></td>   <td>6</td><td>Mood latent <code>state[0..5]</code></td></tr>
+        <tr><td><code>[6:8]</code></td>   <td>2</td><td>Cat world-frame XY position</td></tr>
+        <tr><td><code>[8:10]</code></td>  <td>2</td><td><code>cos(yaw), sin(yaw)</code> &mdash; avoids angle wrap</td></tr>
+        <tr><td><code>[10]</code></td>    <td>1</td><td>Body height (m)</td></tr>
+        <tr><td><code>[11]</code></td>    <td>1</td><td>Horizontal speed |v| (m/s)</td></tr>
+        <tr><td><code>[12]</code></td>    <td>1</td><td>Time-in-skill clipped to 10&nbsp;s, rescaled to [0,&nbsp;1]</td></tr>
+        <tr><td><code>[13:15]</code></td> <td>2</td><td>Nearest play-target &Delta;xy relative to cat (zeros if none)</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      <strong>Action space: <code>Discrete(6)</code>.</strong>
+      Index&nbsp;<code>0</code> is HOLD &mdash; dispatches <code>stay</code> (freeze current pose).
+      Indices&nbsp;<code>1&ndash;5</code> map to
+      <code>walk, crouch, lie_belly, stay, get_up</code> in skill-registry order.
+    </p>
+
+    <p><strong>Reward composition.</strong> Four streams are summed each step:</p>
+    <div class="stack">R = curiosity_w &middot; w_cur  &middot; r_curiosity
+  + comfort_w  &middot; w_com  &middot; r_comfort
+  + play_w     &middot; w_play &middot; r_play
+  + hold_w     &middot;          r_hold
+
+Base weights (CompositeRewardConfig):
+  curiosity_w = 0.2,  comfort_w = 0.4,  play_w = 0.4,  hold_w = 1.0
+  (hold_w is NOT mood-modulated &mdash; stillness is rewarded regardless of mood state)</div>
+    <table class="weights">
+      <thead>
+        <tr><th>Stream</th><th>Formula</th><th>Key parameters</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>r_comfort</strong></td>
+          <td>
+            <code>0.8 &middot; g<sub>soft</sub>(d) + 0.2 &middot; g<sub>warm</sub>(d)</code><br>
+            <code>g(d) = exp(&minus;d&sup2; / 2&sigma;&sup2;)</code>
+          </td>
+          <td>&sigma; = 1.0&nbsp;m; <em>soft</em> = couch-tagged entities,
+              <em>warm</em> = radiator-tagged entities</td>
+        </tr>
+        <tr>
+          <td><strong>r_play</strong></td>
+          <td>
+            Within <code>paw_range = 1.5&nbsp;m</code>:<br>
+            <code>|v_ball| + 0.5</code> if a swat-class skill is active
+          </td>
+          <td>Ball speed in m/s; causal bonus on skill co-occurrence
+              (cheapest-possible credit assignment)</td>
+        </tr>
+        <tr>
+          <td><strong>r_curiosity</strong></td>
+          <td>
+            ICM forward-model error:<br>
+            <code>&eta; &middot; &frac12; &Vert;&phi;&#x0302;(s<sub>t+1</sub>) &minus; &phi;(s<sub>t+1</sub>)&Vert;&sup2;</code>
+          </td>
+          <td>&eta; = 0.5; encoder / forward / inverse MLPs: feature_dim&nbsp;64,
+              hidden&nbsp;128; inverse-loss weight &beta;&nbsp;=&nbsp;0.2 (Pathak 2017); Adam lr&nbsp;=&nbsp;10&sup;&#x207B;&sup3;</td>
+        </tr>
+        <tr>
+          <td><strong>r_hold</strong></td>
+          <td><code>+0.01</code> per step when cat is still and
+              no moving play-target is within saliency range</td>
+          <td>speed &lt; 0.05&nbsp;m/s; saliency radius 0.6&nbsp;m;
+              target-speed gate 0.05&nbsp;m/s
+              (motionless balls are not salient)</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      The ICM module is updated separately from PPO: after each rollout
+      <code>CuriosityUpdateCallback</code> batches all
+      <code>(&phi;<sub>t</sub>, a, &phi;<sub>t+1</sub>)</code> transitions from
+      <code>info[&ldquo;curiosity_transition&rdquo;]</code> and runs one Adam step on
+      <code>L = (1 &minus; &beta;) &middot; L<sub>fwd</sub> + &beta; &middot; L<sub>inv</sub></code>.
+      PPO sees only the scalar <code>r_curiosity</code>, never the encoder gradients.
+    </p>
+
+    <p><strong>PPO hyperparameters (Stable-Baselines3).</strong></p>
+    <table class="weights">
+      <thead>
+        <tr><th>Hyperparameter</th><th>Value</th><th>Rationale</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ent_coef</code></td><td>0.05</td>
+          <td>Prevents collapse to a single skill.
+              SB3 default (0.0) produces degenerate cat behavior &mdash;
+              behavioral variability requires sustained entropy; do not decay.</td>
+        </tr>
+        <tr>
+          <td><code>clip_range</code></td><td>0.2</td>
+          <td>SB3 default; tightening to 0.1 was unnecessary once <code>ent_coef</code> was set</td>
+        </tr>
+        <tr>
+          <td><code>learning_rate</code></td><td>3 &times; 10<sup>&minus;4</sup></td>
+          <td>SB3 Adam default</td>
+        </tr>
+        <tr>
+          <td><code>n_steps</code></td><td>64</td>
+          <td>Rollout horizon per policy update</td>
+        </tr>
+        <tr>
+          <td><code>n_epochs</code></td><td>2</td>
+          <td>Reuse passes per rollout buffer</td>
+        </tr>
+        <tr>
+          <td><code>policy</code></td><td>MlpPolicy</td>
+          <td>Vanilla MLP &mdash; no CNN (v0 obs are vectors, not pixels)</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
   <section>
     <h2>What we tried and removed</h2>
     <p>
