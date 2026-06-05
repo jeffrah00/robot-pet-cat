@@ -127,7 +127,7 @@ reproduced by:
 ```bash
 python scripts/render_brain_3d.py \
     --checkpoint checkpoints/brain/brain_4skill_v1.zip \
-    --duration 600 --output renders/brain3d_random_5min.mp4
+    --duration 300 --output renders/brain3d_random_5min.mp4
 ```
 
 ---
