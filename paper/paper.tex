@@ -50,7 +50,7 @@ categorical head into persistent multi-second modes, and a stochastic
 decision period that breaks the metronomic switching pattern of fixed-tick
 hierarchical RL. The brain runs on top of a small substrate---a Go1
 velocity-tracking walker (Tier~1) and a deliberately minimal skill library
-of four learned skills plus one scripted recovery (Tier~2)---both of which we
+of two RL-trained skills and two scripted skills (Tier~2)---both of which we
 also describe and release. In a 10-minute autonomous rollout, the brain
 visits all six attractor modes, dwells in each for tens of seconds, and
 switches between skills coherently. We also document what \emph{did not
@@ -207,7 +207,7 @@ gating, not at Tier 1 via style imitation.
 \label{subsec:skills}
 
 The canonical skill set is intentionally small. After two months of
-iteration we converged on four learned skills and one scripted skill:
+iteration we converged on two RL-trained skills and two scripted skills:
 
 \begin{center}\small
 \begin{tabular}{lll}
@@ -386,15 +386,14 @@ $\pm 1.0$\,m/s without falling over 30-second rollouts; see
 velocity/command schedule:
 
 \begin{center}\small
-\begin{tabular}{lcc}
+\begin{tabular}{llc}
 \toprule
-Skill & Episode length & Verified \\
+Skill & Checkpoint & Episode length \\
 \midrule
-\texttt{walk}      & 500 steps & \texttt{mjlab\_walk\_normal\_v0.mp4} \\
-\texttt{crouch}    & 489 steps & \texttt{crouch\_v8\_render.mp4} \\
-\texttt{lie\_belly} & 405 steps & \texttt{lie\_belly\_go1\_v3.mp4} \\
-\texttt{stay}      & 600 steps & \texttt{brain\_scripted\_stay\_first\_v1.mp4} \\
-\texttt{get\_up}   & 400 ticks & \texttt{brain\_getup\_fixed\_v3\_real\_policy.mp4} \\
+\texttt{walk}       & \texttt{mjlab\_go1\_walker\_normal.pt} & 500 steps \\
+\texttt{crouch}     & \texttt{mjlab\_go1\_crouch.pt}        & 489 steps \\
+\texttt{lie\_belly} & scripted PD keyframes                 & 405 steps \\
+\texttt{stay}       & joint freeze                          & 600 steps \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -512,22 +511,17 @@ Compute on RunPod A100 spot instances.
 \section{Released artifacts}
 
 The full set of released artifacts is documented at
-\url{https://jeffrah00.github.io/robot-pet-cat/} and mirrored to Hugging Face
-under \texttt{jeffrah00/robot-pet-cat}. The released bundle contains:
+\url{https://jeffrah00.github.io/robot-pet-cat/} . The released bundle contains:
 
 \begin{itemize}[leftmargin=*,nosep]
-  \item \texttt{models/go1\_walker\_v0.pt} --- Tier 1 velocity-tracking
-        walker.
-  \item \texttt{models/mjlab\_go1\_walker\_normal.pt},
-        \texttt{models/mjlab\_go1\_crouch.pt},
-        \texttt{models/mjlab\_go1\_lie\_belly.pt} --- Tier 2 mjlab Go1
-        skill checkpoints. \texttt{stay} is not a separate checkpoint
-        (re-uses the Tier 1 walker with $v_{\text{cmd}}=0$).
-        \texttt{get\_up} is a scripted PD keyframe sequence
-        (\texttt{src/robot\_pet\_cat/brain/scripted\_get\_up.py}).
+  \item \texttt{models/mjlab\_go1\_walker\_normal.pt} --- Tier 1 velocity-tracking
+        walker and walk skill checkpoint.
+  \item \texttt{models/mjlab\_go1\_crouch.pt} --- crouch skill checkpoint.
   \item \texttt{checkpoints/brain/brain\_4skill\_v1.zip} --- Tier 3
-        PPO agent for the Discrete(5) action space, $\sim$152k env
-        steps.
+        PPO brain, Discrete(5) action space, $\sim$152k env steps.
+  \item \texttt{lie\_belly} and \texttt{stay} carry no learned checkpoint:
+        \texttt{lie\_belly} uses a scripted PD keyframe ramp;
+        \texttt{stay} freezes the current joint configuration.
   \item Source: \url{https://github.com/jeffrah00/robot-pet-cat}.
 \end{itemize}
 
