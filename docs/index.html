@@ -328,54 +328,86 @@ MuJoCo + Unitree Go1</div>
   <section>
     <h2>How it works</h2>
 
-    <svg viewBox="0 0 680 210" xmlns="http://www.w3.org/2000/svg"
-         style="width:100%;max-width:680px;display:block;margin:1.5rem auto 2rem;font-family:inherit">
+    <!-- Flow diagram -->
+    <svg viewBox="0 0 720 260" xmlns="http://www.w3.org/2000/svg"
+         style="width:100%;max-width:720px;display:block;margin:1.5rem auto 2.5rem;font-family:inherit">
       <defs>
         <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L8,3 z" fill="#888"/>
+          <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
         </marker>
       </defs>
-      <!-- boxes -->
-      <rect x="20"  y="60" width="160" height="90" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
-      <rect x="260" y="60" width="160" height="90" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
-      <rect x="500" y="60" width="160" height="90" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
-      <!-- labels -->
-      <text x="100" y="94"  text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="600">Mood latent</text>
-      <text x="100" y="112" text-anchor="middle" fill="#94a3b8" font-size="11">6-dim OU process</text>
-      <text x="100" y="128" text-anchor="middle" fill="#94a3b8" font-size="11">drifts over ~20 min</text>
-      <text x="340" y="94"  text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="600">Attractor</text>
-      <text x="340" y="112" text-anchor="middle" fill="#94a3b8" font-size="11">picks behavioral mode</text>
-      <text x="340" y="128" text-anchor="middle" fill="#94a3b8" font-size="11">every ~8–30 s</text>
-      <text x="580" y="94"  text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="600">PPO brain</text>
-      <text x="580" y="112" text-anchor="middle" fill="#94a3b8" font-size="11">picks skill</text>
-      <text x="580" y="128" text-anchor="middle" fill="#94a3b8" font-size="11">every 1.5–4 s</text>
-      <!-- arrows mood → attractor -->
-      <line x1="180" y1="90" x2="256" y2="90" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
-      <text x="218" y="84" text-anchor="middle" fill="#64748b" font-size="10">mode bias</text>
-      <!-- arrows mood → ppo (reward weights, curved down) -->
-      <path d="M 100 150 Q 100 190 340 190 Q 580 190 580 154" fill="none" stroke="#888" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr)"/>
-      <text x="340" y="202" text-anchor="middle" fill="#64748b" font-size="10">reward weights (curiosity / comfort / play)</text>
-      <!-- arrows attractor → ppo -->
-      <line x1="420" y1="105" x2="496" y2="105" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
-      <text x="458" y="99" text-anchor="middle" fill="#64748b" font-size="10">allowed skills</text>
-      <!-- bottom label -->
-      <text x="580" y="172" text-anchor="middle" fill="#64748b" font-size="10">→ walk / crouch / lie_belly / stay</text>
+
+      <!-- Boxes -->
+      <rect x="20"  y="80" width="170" height="100" rx="8" fill="#0f172a" stroke="#475569" stroke-width="1.5"/>
+      <rect x="275" y="80" width="170" height="100" rx="8" fill="#0f172a" stroke="#475569" stroke-width="1.5"/>
+      <rect x="530" y="80" width="170" height="100" rx="8" fill="#0f172a" stroke="#475569" stroke-width="1.5"/>
+
+      <!-- Box titles -->
+      <text x="105" y="103" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="700">Mood Latent</text>
+      <text x="360" y="103" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="700">Attractor</text>
+      <text x="615" y="103" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="700">PPO Brain</text>
+
+      <!-- Box subtitles -->
+      <text x="105" y="120" text-anchor="middle" fill="#64748b" font-size="10">6-dim OU process</text>
+      <text x="360" y="120" text-anchor="middle" fill="#64748b" font-size="10">mode-transition policy</text>
+      <text x="615" y="120" text-anchor="middle" fill="#64748b" font-size="10">MlpPolicy, Discrete(6)</text>
+
+      <!-- IN/OUT labels inside boxes -->
+      <text x="105" y="142" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">in: &epsilon; ~ N(0,I&#x2086;), dt</text>
+      <text x="105" y="157" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">out: state[0..5]</text>
+
+      <text x="360" y="142" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">in: mood weights, time_in_mode</text>
+      <text x="360" y="157" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">out: mode &isin; &#x7B;REST,OBS,STALK,</text>
+      <text x="360" y="170" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">PLAY,GROOM,EXPLORE&#x7D;</text>
+
+      <text x="615" y="142" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">in: 15-dim obs, reward weights,</text>
+      <text x="615" y="157" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">allowed skill mask</text>
+      <text x="615" y="172" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">out: skill ID, every 1.5&ndash;4 s</text>
+
+      <!-- Arrow: Mood → Attractor (mode bias, dims 0-2) -->
+      <line x1="190" y1="112" x2="271" y2="112" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="230" y="105" text-anchor="middle" fill="#94a3b8" font-size="9.5">state[0&#x2013;2]</text>
+      <text x="230" y="117" text-anchor="middle" fill="#64748b" font-size="9">(mode bias)</text>
+
+      <!-- Arrow: Attractor → PPO (allowed skill mask) -->
+      <line x1="445" y1="112" x2="526" y2="112" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="485" y="105" text-anchor="middle" fill="#94a3b8" font-size="9.5">skill mask</text>
+      <text x="485" y="117" text-anchor="middle" fill="#64748b" font-size="9">(per-mode allow-list)</text>
+
+      <!-- Arrow: Mood → PPO (reward weights, curved below) -->
+      <path d="M 105 180 Q 105 230 360 230 Q 615 230 615 185" fill="none"
+            stroke="#64748b" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr)"/>
+      <text x="360" y="248" text-anchor="middle" fill="#64748b" font-size="9.5">state[3&#x2013;5] &rarr; &sigma;(2x) &rarr; (w&#x2091;&#x1D497;&#x1D497;, w&#x2090;&#x1D49C;&#x1D49C;, w&#x209A;&#x1D4C1;&#x1D4CE;&#x1D4CE;)</text>
+
+      <!-- PPO output arrow -->
+      <line x1="700" y1="130" x2="718" y2="130" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="615" y="200" text-anchor="middle" fill="#475569" font-size="9.5">walk / crouch / lie_belly / stay / get_up</text>
     </svg>
 
-    <p><strong>Mood</strong> is a slow internal state — imagine a cat&rsquo;s energy level and curiosity
-    changing gradually across the day. It drifts on its own without any external input, pulling the
-    cat toward different behavioral modes depending on how it currently feels.</p>
+    <p><strong>Mood latent.</strong> A 6-dimensional Ornstein&ndash;Uhlenbeck process running
+    at every physics step. The first three dimensions (energy, alertness, sociability) provide
+    a continuous bias to the mode-transition softmax. The last three dimensions are passed through
+    &sigma;(2x) to produce the per-step reward weights (w<sub>curiosity</sub>,
+    w<sub>comfort</sub>, w<sub>play</sub>), making the reward landscape itself a function of
+    internal state. The time constant is ~20 min, so mood evolves much slower than skill selection.</p>
 
-    <p><strong>The attractor</strong> decides which mode the cat is in right now: resting, observing,
-    stalking, playing, grooming, or exploring. It reads the current mood and samples a new mode every
-    so often, but won&rsquo;t switch until the cat has stayed in the current mode long enough. Each mode
-    only allows certain skills — a resting cat can&rsquo;t break into a walk.</p>
+    <p><strong>Attractor.</strong> A mode-transition policy over six behavioral modes.
+    At each potential transition point it computes logits as a linear function of the current
+    mood weights, then samples from softmax(logits / T). A transition is gated by a minimum
+    dwell time, so the cat commits to a mode for tens of seconds before reconsidering.
+    Each mode defines an allow-list of skills and a set of hard-blocked skills
+    (e.g. walk is always blocked in RESTING and GROOMING). Out-of-allow-list actions are
+    suppressed stochastically with a 70/30 soft-pass rather than a hard mask,
+    preserving gradient flow.</p>
 
-    <p><strong>The PPO brain</strong> picks the actual skill to execute, choosing from whatever the
-    current mode allows. It doesn&rsquo;t decide every physics step — it commits to a skill for a
-    few seconds at a time, which is why the rollout looks deliberate rather than jittery.
-    The reward signal it learns from is also shaped by mood: a curious cat gets more reward for
-    exploring new areas, a comfortable cat gets more reward for staying near the couch.</p>
+    <p><strong>PPO brain.</strong> An MlpPolicy over a 15-dim observation vector
+    (mood state[6], XY position[2], cos/sin yaw[2], body height[1], horizontal speed[1],
+    normalized time-in-skill[1], play-target &Delta;xy[2]) with a Discrete(6) action head.
+    Index&nbsp;0 is HOLD; indices&nbsp;1&ndash;5 map to the five skills.
+    The policy is queried on a stochastic commitment schedule (T&nbsp;~&nbsp;U(1.5,&nbsp;4.0)&nbsp;s)
+    rather than every step, which eliminates high-frequency skill thrashing without modifying
+    the policy architecture. Entropy regularization (ent_coef&nbsp;=&nbsp;0.05) is critical
+    to prevent collapse to a single dominant skill.</p>
   </section>
 
   <section>
