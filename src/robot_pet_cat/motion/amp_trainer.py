@@ -276,7 +276,6 @@ def _save_pickle(obj, path: Path) -> None:
 
 
 def _push_to_hf(local_path: Path, repo: str) -> None:
-    from huggingface_hub import HfApi
     api = HfApi()
     api.create_repo(repo, exist_ok=True, repo_type="model")
     api.upload_file(
