@@ -82,10 +82,8 @@ echo ">>> HF + W&B login (if .env has the keys)"
 if [[ -f .env ]]; then
   # shellcheck disable=SC1091
   set -a; source .env; set +a
-  echo "${HF_TOKEN:-}" | huggingface-cli login --token "${HF_TOKEN:-}" --add-to-git-credential || true
   wandb login "${WANDB_API_KEY:-}" || true
 else
-  echo "No .env found - log in manually with huggingface-cli login && wandb login"
 fi
 
 # --- 6. Submodule + smoke test ----------------------------------------------
