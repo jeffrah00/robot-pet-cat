@@ -251,7 +251,7 @@
     <h2>The stack</h2>
     <div class="stack">brain    (Tier 3) — PPO + 6-D mood + 6-mode attractor, ~0.5 Hz
    ↓ skill ID
-skills   (Tier 2) — { walk, crouch, lie_belly, stay } + scripted get_up
+skills   (Tier 2) — { walk, crouch, lie_belly, stay }
    ↓ velocity / joint targets
 motion   (Tier 1) — Go1 velocity-tracking walker (mjlab PPO), 50 Hz
    ↓ joint torques
@@ -290,7 +290,7 @@ MuJoCo + Unitree Go1</div>
       <!-- Box subtitles -->
       <text x="105" y="120" text-anchor="middle" fill="#64748b" font-size="10">6-dim OU process</text>
       <text x="360" y="120" text-anchor="middle" fill="#64748b" font-size="10">mode-transition policy</text>
-      <text x="615" y="120" text-anchor="middle" fill="#64748b" font-size="10">MlpPolicy, Discrete(6)</text>
+      <text x="615" y="120" text-anchor="middle" fill="#64748b" font-size="10">MlpPolicy, Discrete(5)</text>
 
       <!-- IN/OUT labels inside boxes -->
       <text x="105" y="142" text-anchor="middle" fill="#94a3b8" font-size="10" font-style="italic">in: &epsilon; ~ N(0,I&#x2086;), dt</text>
@@ -342,7 +342,7 @@ MuJoCo + Unitree Go1</div>
 
     <p><strong>PPO brain.</strong> An MlpPolicy over a 15-dim observation vector
     (mood state[6], XY position[2], cos/sin yaw[2], body height[1], horizontal speed[1],
-    normalized time-in-skill[1], play-target &Delta;xy[2]) with a Discrete(6) action head.
+    normalized time-in-skill[1], play-target &Delta;xy[2]) with a Discrete(5) action head.
     Index&nbsp;0 is HOLD; indices&nbsp;1&ndash;5 map to the five skills.
     The policy is queried on a stochastic commitment schedule (T&nbsp;~&nbsp;U(1.5,&nbsp;4.0)&nbsp;s)
     rather than every step, which eliminates high-frequency skill thrashing without modifying
@@ -353,7 +353,7 @@ MuJoCo + Unitree Go1</div>
   <section>
     <h2>Skill library</h2>
     <p>
-      Four learned skills, one scripted recovery. Earlier versions of the
+      Four learned skills. Earlier versions of the
       system carried fifteen named skills; we converged here after the
       <em>faking-is-enough</em> principle: scripted PD for postures, RL
       only where RL is necessary.
