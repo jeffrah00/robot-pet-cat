@@ -21,8 +21,7 @@ what to do moment by moment.
 ```
 brain    (Tier 3) — PPO + 6-D mood latent + 6-mode attractor, ~0.5 Hz
    ↓ skill ID
-skills   (Tier 2) — { walk, crouch, lie_belly, stay } + scripted get_up
-   ↓ velocity / joint targets
+skills   (Tier 2) — { walk, crouch, lie_belly, stay } + scripted   ↓ velocity / joint targets
 motion   (Tier 1) — Go1 velocity-tracking walker (mjlab PPO), 50 Hz
    ↓ joint torques
 MuJoCo + Unitree Go1
@@ -76,8 +75,7 @@ Tested with Python 3.11, MuJoCo 3.5.0, PyTorch 2.4 (cu124), Stable-Baselines3
 | `models/mjlab_go1_walker_normal.pt`    | Tier 2 — forward walking gait |
 | `models/mjlab_go1_crouch.pt`           | Tier 2 — stable crouch posture |
 | `models/mjlab_go1_lie_belly.pt`        | Tier 2 — belly-down loaf pose |
-| `src/robot_pet_cat/brain/scripted_get_up.py` | Tier 2 — scripted PD `get_up` (no checkpoint) |
-| `checkpoints/brain/brain_4skill_v1.zip` | Tier 3 — PPO brain, Discrete(5), ~152k env steps |
+| `src/robot_pet_cat/brain/scripted_| `checkpoints/brain/brain_4skill_v1.zip` | Tier 3 — PPO brain, Discrete(5), ~152k env steps |
 
 `stay` is not a separate checkpoint — it re-uses the Tier 1 walker with the
 velocity command pinned to zero.
