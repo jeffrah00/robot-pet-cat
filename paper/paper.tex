@@ -16,6 +16,9 @@
 \usepackage{authblk}
 \usepackage{caption}
 \usepackage{subcaption}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
+\graphicspath{{figures/}}
 
 \hypersetup{
   colorlinks=true,
@@ -47,7 +50,7 @@ categorical head into persistent multi-second modes, and a stochastic
 decision period that breaks the metronomic switching pattern of fixed-tick
 hierarchical RL. The brain runs on top of a small substrate---a Go1
 velocity-tracking walker (Tier~1) and a deliberately minimal skill library
-of four learned skills (Tier~2)---both of which we
+of four learned skills plus one scripted recovery (Tier~2)---both of which we
 also describe and release. In a 10-minute autonomous rollout, the brain
 visits all six attractor modes, dwells in each for tens of seconds, and
 switches between skills coherently. We also document what \emph{did not
@@ -108,7 +111,7 @@ skill-thrashing into recognizable, persistent feline behavior.
   \item \textbf{(substrate)} A reproducible three-tier learning stack
         the brain runs on, open-sourced under MIT.
   \item \textbf{(substrate)} An empirical demonstration that a
-        \emph{small} canonical skill set (four learned) is
+        \emph{small} canonical skill set (four learned + one scripted) is
         sufficient---more skills do not help.
   \item \textbf{(negative results)} A documented record of three failed
         paradigms (AMP imitation, MoB skill space, single-policy get-up
@@ -213,20 +216,44 @@ Skill & Checkpoint & Implementation \\
 \midrule
 \texttt{walk}      & \texttt{models/mjlab\_go1\_walker\_normal.pt} & PPO, mjlab Go1-Flat \\
 \texttt{crouch}    & \texttt{models/mjlab\_go1\_crouch.pt}        & PPO, mjlab Go1 crouch task \\
-\texttt{lie\_belly} & \texttt{models/mjlab\_go1\_lie\_belly.pt}    & PPO, mjlab Go1 lie task \\
-\texttt{stay}      & (walker checkpoint, $v_{\text{cmd}}=0$)      & re-uses Tier 1 walker \\
-\texttt{get\_up}   & \texttt{src/.../scripted\_get\_up.py}         & Scripted PD keyframe (auto-triggered on fall; not a brain action) \\
+\texttt{lie\_belly} & ---                                          & PD keyframe ramp (joint targets) \\
+\texttt{stay}      & ---                                          & joint freeze (current $q_\text{pos}$) \\
 \bottomrule
 \end{tabular}
 \end{center}
 
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}[b]{0.24\linewidth}
+    \includegraphics[width=\linewidth]{figures/frame_v5_6s.png}
+    \caption{\texttt{stay}}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.24\linewidth}
+    \includegraphics[width=\linewidth]{figures/frame_v5_8s.png}
+    \caption{\texttt{walk}}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.24\linewidth}
+    \includegraphics[width=\linewidth]{figures/frame_v5_10s.png}
+    \caption{\texttt{crouch}}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.24\linewidth}
+    \includegraphics[width=\linewidth]{figures/frame_v5_12s.png}
+    \caption{\texttt{lie\_belly}}
+  \end{subfigure}
+  \caption{The four skills in the MuJoCo household scene. Frames sampled from
+  a 5-minute autonomous brain rollout (\texttt{brain3d\_random\_5min.mp4}).
+  Debug overlay is visible in simulation only.}
+  \label{fig:skills}
+\end{figure}
+
 The brain's categorical head emits a \textsc{Discrete}(5) action
-(\textsc{hold}, \texttt{walk}, \texttt{crouch}, \texttt{lie\_belly},
-\texttt{stay}); a separate \texttt{get\_up} dispatch fires automatically
-whenever the trunk is detected as fallen. \texttt{stay} is not a
-separate trained checkpoint: it reuses the Tier 1 walker with the velocity
-command pinned to zero (release-once-speed-falls dwell logic, commit
-\texttt{19780cc7}).
+(\textsc{hold}$=$0, \texttt{walk}, \texttt{crouch}, \texttt{lie\_belly},
+\texttt{stay}). A separate \texttt{get\_up} dispatch fires automatically
+whenever the trunk is detected as fallen (\texttt{proj\_grav\_z} $> -0.5$);
+it is not a brain-selectable action. \texttt{stay} and \texttt{lie\_belly}
+carry no learned checkpoint: \texttt{stay} freezes the current joint
+configuration; \texttt{lie\_belly} ramps joint targets via a scripted
+PD keyframe sequence.
 
 \paragraph{Why so few skills?}
 Earlier versions of the system carried up to fifteen named skills
@@ -250,6 +277,35 @@ encode get-up as a 400-tick scripted PD keyframe sequence; this is fast,
 deterministic, and works on the first try. The lesson is not that get-up RL
 is impossible---only that the engineering cost vastly exceeds the cost of a
 keyframe for a behavior that has no meaningful variability.
+
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners=6pt, minimum width=3.2cm, minimum height=1.2cm,
+              align=center, fill=gray!10},
+  arr/.style={-{Latex[length=3mm]}, thick},
+  darr/.style={-{Latex[length=3mm]}, thick, dashed},
+  lbl/.style={font=\small, midway}
+]
+  \node[box] (mood) {\textbf{Mood latent}\\6-dim OU process};
+  \node[box, right=2.4cm of mood] (att)  {\textbf{Attractor}\\mode policy};
+  \node[box, right=2.4cm of att]  (ppo)  {\textbf{PPO Brain}\\Discrete(5)};
+
+  \draw[arr] (mood) -- node[above,lbl]{state[0--2]} node[below,lbl]{\small mode bias} (att);
+  \draw[arr] (att)  -- node[above,lbl]{skill mask} (ppo);
+  \draw[darr] (mood.south) -- ++(0,-0.7) -| node[below,lbl,pos=0.25]
+      {state[3--5] $\xrightarrow{\sigma(2x)}$ $(w_\text{cur},w_\text{com},w_\text{play})$}
+      (ppo.south);
+  \draw[arr] (ppo.east) -- ++(0.6,0) node[right]{\small skill ID};
+\end{tikzpicture}
+\caption{Information flow through the three behavioral components. Mood dims
+0--2 bias the attractor's mode-transition softmax; dims 3--5 set
+mood-modulated reward weights for the PPO via a sigmoid. The attractor
+passes an action mask constraining which skills the brain may select in the
+current mode.}
+\label{fig:flow}
+\end{figure}
 
 \subsection{Tier 3: brain}
 \label{subsec:brain}
@@ -347,23 +403,23 @@ Skill & Episode length & Verified \\
 
 \subsection{Composed brain rollout}
 
-We rolled out the released brain (\texttt{brain\_4skill\_v1.zip}) for ten
+We rolled out the released brain (\texttt{brain\_4skill\_v1.zip}) for five
 minutes under no external command input.
 \Cref{tab:rollout} reports mode dwell-time and skill-usage histograms.
 The full rollout is at
-\texttt{renders/brain\_4skill\_10min.mp4}.
+\texttt{renders/brain/brain3d\_random\_5min.mp4}.
 
 \begin{table}[h]
   \centering\small
-  \caption{10-minute autonomous rollout from
+  \caption{5-minute autonomous rollout from
   \texttt{brain\_4skill\_v1.zip}. All six attractor modes are visited; total
-  mode time sums to 600\,s. Mean dwell-times cluster just above
+  mode time sums to 300\,s. Mean dwell-times cluster just above
   $\tau_{\min} = 8.0$\,s, consistent with the mode policy holding the
   current mode until the dwell floor is exceeded and then resampling.
   ``Skill dispatches'' lists the top skill counts within each mode (a
   \emph{dispatch} is a transition from one active skill to another).
   Reproduce with
-  \texttt{python scripts/measure\_rollout.py --duration 600}.}
+  \texttt{python scripts/measure\_rollout.py --duration 300}.}
   \label{tab:rollout}
   \begin{tabular}{lrccl}
     \toprule
