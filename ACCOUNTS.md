@@ -18,17 +18,6 @@ accounts (well, three signups + one PAT + one optional API key), all free tier.
 - The `scripts/sandbox_push.py` script reads this token and pushes specific
   files on demand. See `docs/retargeting.md` and the script's `--help`.
 
-### 2. Hugging Face Hub -- models + motion-clip dataset
-- **Signup:** https://huggingface.co/join (free)
-- **What it gives us:** versioned storage for the AMP-trained motion
-  checkpoint, every skill checkpoint, the brain checkpoint, and the
-  retargeted motion-clip dataset.
-- **Storage estimate:** ~5-15 GB total for all artifacts combined. Free tier
-  is fine; HF Pro ($9/mo) only if we want private datasets.
-- **After signup:**
-  1. Create an access token at https://huggingface.co/settings/tokens (Write scope)
-  2. Save it; you'll run `huggingface-cli login` and paste it.
-
 ### 3. Weights & Biases -- experiment tracking
 - **Signup:** https://wandb.ai/site (free for personal use)
 - **What it gives us:** training curves, hyperparameter sweeps, video logging
