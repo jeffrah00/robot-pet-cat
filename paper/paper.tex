@@ -282,93 +282,91 @@ keyframe for a behavior that has no meaningful variability.
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[
-  box/.style={draw, rounded corners=6pt, minimum width=3.2cm, minimum height=1.2cm,
-              align=center, fill=gray!10},
-  arr/.style={-{Latex[length=3mm]}, thick},
-  darr/.style={-{Latex[length=3mm]}, thick, dashed},
-  lbl/.style={font=\small, midway}
+  box/.style={draw, rounded corners=5pt, minimum width=3.6cm, minimum height=2.6cm,
+              align=center, fill=gray!8, font=\small},
+  arr/.style={-{Latex[length=2.5mm]}, thick, gray!60!black},
+  darr/.style={-{Latex[length=2.5mm]}, thick, dashed, gray!60!black},
+  albl/.style={font=\scriptsize, midway, fill=white, inner sep=1pt}
 ]
-  \node[box] (mood) {\textbf{Mood latent}\\6-dim OU process};
-  \node[box, right=2.4cm of mood] (att)  {\textbf{Attractor}\\mode policy};
-  \node[box, right=2.4cm of att]  (ppo)  {\textbf{PPO Brain}\\Discrete(5)};
-
-  \draw[arr] (mood) -- node[above,lbl]{state[0--2]} node[below,lbl]{\small mode bias} (att);
-  \draw[arr] (att)  -- node[above,lbl]{skill mask} (ppo);
-  \draw[darr] (mood.south) -- ++(0,-0.7) -| node[below,lbl,pos=0.25]
-      {state[3--5] $\xrightarrow{\sigma(2x)}$ $(w_\text{cur},w_\text{com},w_\text{play})$}
+  \node[box] (mood) {
+    \textbf{Mood Latent}\\[2pt]
+    \textit{\scriptsize 6-dim OU process}\\[4pt]
+    \textcolor{gray!70!black}{\scriptsize\textit{in: $\varepsilon\!\sim\!\mathcal{N}(0,I_6),\;\Delta t$}}\\[2pt]
+    \textcolor{gray!70!black}{\scriptsize\textit{out: state[0..5]}}
+  };
+  \node[box, right=2.0cm of mood] (att) {
+    \textbf{Attractor}\\[2pt]
+    \textit{\scriptsize mode-transition policy}\\[4pt]
+    \textcolor{gray!70!black}{\scriptsize\textit{in: mood weights, time\_in\_mode}}\\[2pt]
+    \textcolor{gray!70!black}{\scriptsize\textit{out: mode $\in$ \{REST, OBS, STALK,\ldots\}}}
+  };
+  \node[box, right=2.0cm of att] (ppo) {
+    \textbf{PPO Brain}\\[2pt]
+    \textit{\scriptsize MlpPolicy, Discrete(5)}\\[4pt]
+    \textcolor{gray!70!black}{\scriptsize\textit{in: 15-dim obs, reward weights, skill mask}}\\[2pt]
+    \textcolor{gray!70!black}{\scriptsize\textit{out: skill ID, every 1.5--4\,s}}
+  };
+  \draw[arr] (mood.east) -- node[albl,above]{\scriptsize state[0--2]}
+                             node[albl,below]{\scriptsize (mode bias)} (att.west);
+  \draw[arr] (att.east)  -- node[albl,above]{\scriptsize skill mask} (ppo.west);
+  \draw[darr] (mood.south) -- ++(0,-0.6) -|
+      node[albl,pos=0.25,below]{\scriptsize state[3--5] via $\sigma(2x)$
+        $\to(w_\mathrm{cur},\,w_\mathrm{com},\,w_\mathrm{play})$}
       (ppo.south);
-  \draw[arr] (ppo.east) -- ++(0.6,0) node[right]{\small skill ID};
+  \draw[arr] (ppo.east) -- ++(0.5,0) node[right]{\scriptsize skill ID};
 \end{tikzpicture}
-\caption{Information flow through the three behavioral components. Mood dims
-0--2 bias the attractor's mode-transition softmax; dims 3--5 set
-mood-modulated reward weights for the PPO via a sigmoid. The attractor
-passes an action mask constraining which skills the brain may select in the
-current mode.}
+\caption{Information flow through the three behavioral components.
+Solid arrows carry structural information (mode bias, skill mask);
+the dashed arrow carries mood-modulated reward weights making the
+PPO's reward landscape a function of internal state.}
 \label{fig:flow}
 \end{figure}
 
 \subsection{Tier 3: brain}
 \label{subsec:brain}
 
-\paragraph{Observation.}
-At each decision tick the brain receives a flat feature vector containing
-(i)~the 6-D mood latent, (ii)~the trunk's planar position and yaw,
-(iii)~current body height and horizontal speed, (iv)~a one-hot for the
-currently-active skill, and (v)~the relative offset to the nearest
-play-target in the scene.
+\paragraph{Mood latent.}
+A 6-dimensional Ornstein--Uhlenbeck process updated at every physics step (\cref{fig:flow}).
+\textbf{Input:} Gaussian noise $\varepsilon \sim \mathcal{N}(0,I_6)$ and elapsed time $\Delta t$.
+\textbf{Output:} state vector $\mathbf{m}\in[-1,1]^6$.
+Dimensions 0--2 (energy, alertness, sociability) provide additive logit biases
+to the attractor's mode-transition softmax.
+Dimensions 3--5 are mapped through $\sigma(2m_i)$ to produce per-step reward weights
+$(w_\text{cur}, w_\text{com}, w_\text{play})$, making the reward landscape
+a continuous function of internal state.
 
-\paragraph{Action.}
-\textsc{Discrete}(5): \textsc{hold}, \texttt{walk}, \texttt{crouch},
-\texttt{lie\_belly}, \texttt{stay}. The \textsc{hold} action retains the
-previous skill---this matters; see \emph{decision period} below.
+\paragraph{Behavioral attractor.}
+A mode-transition policy over six behavioral modes.
+\textbf{Input:} mood weights and accumulated time-in-mode.
+\textbf{Output:} current mode sampled from a mood-biased softmax with temperature $T\!=\!0.8$.
+A transition is only considered once the cat has held the current mode
+for at least $\tau_{\min}\!=\!8$\,s.
+Each mode specifies an allow-list of skills and may hard-block others
+(e.g.\ \texttt{walk} is blocked in \textsc{resting} and \textsc{grooming}).
+Out-of-list actions are suppressed with probability 0.70 rather than a
+hard mask, preserving gradient flow.
+
+\paragraph{PPO brain.}
+An MlpPolicy over a 15-dimensional observation vector.
+\textbf{Input:} mood state $\mathbf{m}[0{:}6]$, trunk XY position,
+$\cos$/$\sin$ yaw, body height, horizontal speed, normalized time-in-skill,
+and play-target $\Delta$xy (zeros if none).
+Action space \textsc{Discrete}(5): index~0 is \textsc{hold};
+indices~1--4 map to \texttt{walk}, \texttt{crouch}, \texttt{lie\_belly}, \texttt{stay}.
+\textbf{Output:} a skill selection every $T \sim \mathcal{U}(1.5, 4.0)$\,s.
+A separate \texttt{get\_up} dispatch fires automatically whenever the trunk
+is detected as fallen; it is not a brain-selectable action.
+Entropy coefficient $\alpha_H\!=\!0.05$ prevents collapse to a single skill.
 
 \paragraph{Composite reward.}
-\[
-r_t = w_c(\text{mood}) \cdot r^{\text{cur}}_t
-     + w_o(\text{mood}) \cdot r^{\text{com}}_t
-     + w_p(\text{mood}) \cdot r^{\text{play}}_t
-     + r^{\text{hold}}_t.
-\]
-$r^{\text{cur}}$ is the ICM forward-model surprise. $r^{\text{com}}$ rewards
-being settled (low velocity, low jerk). $r^{\text{play}}$ rewards proximity
-and orientation toward the nearest play-target. $r^{\text{hold}}$ is a small
-positive bonus for emitting \textsc{hold}---a pause-as-default prior that
-counteracts PPO's tendency to keep moving.
+Four streams are summed each step:
+$R = w_\text{cur} r_\text{curiosity} + w_\text{com} r_\text{comfort}
+    + w_\text{play} r_\text{play} + r_\text{hold}$.
+$r_\text{comfort}$: Gaussian proximity to soft-tagged entities ($\sigma\!=\!1$\,m).
+$r_\text{play}$: ball speed within 1.5\,m of the paw.
+$r_\text{curiosity}$: ICM forward-model error (Pathak 2017, $\eta\!=\!0.5$).
+$r_\text{hold}$: stillness bonus (+0.01) when no moving play-target is salient.
 
-\paragraph{Mood latent.}
-A 6-vector $(\text{energy}, \text{alertness}, \text{sociability},
-w_c, w_o, w_p)$, updated as an Ornstein--Uhlenbeck process per sim step.
-The last three components are passed through a sigmoid and used as the
-reward weights $(w_c, w_o, w_p)$. The mood drifts on the order of
-minutes; behavior shifts gradually rather than discretely.
-
-\paragraph{Attractors.}
-The brain is wrapped by a \emph{mode policy}. At any time the brain is in
-one of six attractor modes: \textsc{resting}, \textsc{observing},
-\textsc{stalking}, \textsc{playing}, \textsc{grooming}, \textsc{exploring}.
-Each mode admits a fixed subset of skills (an action mask), with three
-universal skills (\texttt{get\_up}, \texttt{stand}, \texttt{look\_at})
-available in every mode. Mode transitions are considered every
-$\Delta t_{\text{mode}}$ seconds, conditional on a minimum dwell-time
-constraint $\tau_{\text{min}}$. Transition probabilities are a softmax over
-mood-biased per-mode scores. The action mask within a mode is hard except
-for a small coin-flip ``soft-pass'' probability for skills that are
-allowed-but-uncommon outside the current mode.
-
-\paragraph{Two-tier decision cadence.}
-There are two distinct decision clocks. The brain's categorical
-skill-selection head is consulted every brain step
-($\Delta t_{\text{brain}}$, the sim-step interval); but the
-\emph{attractor} layer only re-evaluates mode transitions every
-$\Delta t_{\text{mode}} = 4.0$\,s and only if the current mode has been
-held for at least $\tau_{\min} = 8.0$\,s. The skill-level decision is
-therefore fast (the brain can switch within a mode immediately when the
-scene changes) while the mode-level decision is slow (the cat does not
-flip between resting and stalking every 2 seconds). Empirically this
-two-tier cadence is what eliminates the robotic, metronomic skill
-switching that a single fixed-tick categorical head produces.
-
-%-----------------------------------------------------------------------
 \section{Experiments}
 \label{sec:experiments}
 %-----------------------------------------------------------------------
@@ -406,8 +404,7 @@ Skill & Episode length & Verified \\
 We rolled out the released brain (\texttt{brain\_4skill\_v1.zip}) for five
 minutes under no external command input.
 \Cref{tab:rollout} reports mode dwell-time and skill-usage histograms.
-The full rollout is at
-\texttt{renders/brain/brain3d\_random\_5min.mp4}.
+The full rollout video is included in the released artifacts.
 
 \begin{table}[h]
   \centering\small
@@ -471,33 +468,6 @@ stretches) mixed in with locomotion. Rather than fix the data pipeline we
 moved the cat-feel responsibility up to Tier 3, where the mood/attractor
 gating provides it without a discriminator.
 
-\subsection{walk-these-ways as a unified skill space}
-
-We forked the mjlab Unitree-Go2-Flat task into a MoB variant
-(\texttt{Go2-Flat-MoB}) with body-height, gait-frequency, and stance
-commands. Two consecutive runs failed: v1 because the obs-patch did not
-actually expose the new commands to the policy; v2 because warm-starting
-from a non-MoB checkpoint did not propagate into the new head. We retired
-the approach in favor of separately trained skill checkpoints because the
-combined-command policy did not actually exhibit per-command behavior even
-when training was fixed. A library of small specialists is, in our
-experience, easier to debug than a single multi-headed generalist.
-
-\subsection{Single-policy RL get-up}
-
-Recovery from a fallen pose is the canonical example of an RL skill, and we
-tried eleven variants: v1 baseline, v2 init-pose tilt, v3 reward shape A, v4
-reward shape B (a-c), v5--v6 contact penalties, v7 FR-Net~\cite{frnet2024}
-mass-contact predictor with a 128$\times$3 auxiliary head, v7.1--v7.3 with
-different aux head sizes and reward weights, v8 with relaxed
-\texttt{fell\_over} termination, v9 with passivity penalties + soft-reset
-events, v10a--d with init-pose curricula. Eight variants converged to
-\emph{sphynx} (chest down, head up, immobile) or \emph{belly-flat} (passive
-lying) reward-hacks. One (v10b) appeared to succeed but only because of a
-curriculum-at-deployment bug. The final \texttt{get\_up} skill is a
-hand-tuned 400-tick PD keyframe sequence and works on the first attempt.
-
-%-----------------------------------------------------------------------
 \section{Limitations}
 %-----------------------------------------------------------------------
 
