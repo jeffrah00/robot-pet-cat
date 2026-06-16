@@ -149,7 +149,7 @@ Short version:
 ```bibtex
 @article{rah2026brain,
   title   = {How to Make a Robot Pet Cat: Part 1 --- Brain},
-  author  = {Rah, Jeffrey},
+  author  = {Rah, K. Jeff},
   journal = {arXiv preprint},
   year    = {2026}
 }
