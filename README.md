@@ -10,8 +10,8 @@ what to do moment by moment.
 **License:** MIT
 
 <p align="center">
-  <em>5-min autonomous rollout:</em><br>
-  <code>renders/brain3d_random_5min.mp4</code>
+  <img src="frames/rnd_t0p5s_start.png" alt="First frame of the 5-min autonomous rollout" width="640"/>
+  <br><em>First frame of the 5-min autonomous rollout — full video: <code>renders/brain3d_random_5min.mp4</code></em>
 </p>
 
 ---
